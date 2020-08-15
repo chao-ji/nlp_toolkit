@@ -2,8 +2,8 @@
 import tensorflow as tf
 import numpy as np
 
-from tokenization import SOS_ID
-from tokenization import EOS_ID
+from .tokenization import SOS_ID
+from .tokenization import EOS_ID
 
 
 # large negative value considered numerically as -inf
