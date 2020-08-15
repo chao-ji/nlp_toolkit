@@ -237,13 +237,13 @@ class BeamSearch(object):
   def _continue_search(self, state):
     """Determines whether to keep searching or terminate.
 
-    We terminate the search if the following is True:
+    We terminate the search if either of the following is True:
       1. `cur_index` >= `max_decode_length`
       2. It is True that for all concurrent searches in a batch, the worst score
         of finished seqs over all beams > the best score of active seqs over all 
         beams -- the remaining candidate active seqs will never outscore the 
         current finished seqs (because scores of active seqs will certainly get 
-        lower with the growing length).
+        lower as we grow the partial seqs).
 
     Args:
       state: a dict holding the loop invariant tensors over the decoding 

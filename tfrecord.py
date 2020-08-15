@@ -68,7 +68,7 @@ def main(_):
   target_data = itertools.chain(*target_files)
 
   filepaths = [os.path.join(output_dir, '%05d-of-%05d.tfrecord' % 
-      (i + 1, total_shards))  for i in range(total_shards)]
+      (i + 1, total_shards)) for i in range(total_shards)]
 
   writers = [tf.io.TFRecordWriter(fn) for fn in filepaths]
   shard = 0
@@ -78,11 +78,11 @@ def main(_):
     source_line = source_line.strip()
     target_line = target_line.strip()
     if counter > 0 and counter % 1e5 == 0:
-        print('Number of examples saved: %d.' % counter)
+      print('Number of examples saved: %d.' % counter)
 
     example = _dict_to_example(
-        {"source": subtokenizer.encode(source_line, add_eos=True),
-         "target": subtokenizer.encode(target_line, add_eos=True)})
+        {'source': subtokenizer.encode(source_line, add_eos=True),
+         'target': subtokenizer.encode(target_line, add_eos=True)})
     writers[shard].write(example.SerializeToString())
     shard = (shard + 1) % total_shards
 
