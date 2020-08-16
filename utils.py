@@ -30,14 +30,14 @@ def compute_loss(labels, logits, smoothing, vocab_size, padding_value=0):
   effective_vocab_size = vocab_size - 1
 
   # prob mass allocated to the token that should've been predicted 
-  on_value = tf.cast(1.0 - smoothing, 'float32')
+  on_value = 1.0 - smoothing
   # prob mass allocated to all other tokens
-  off_value = tf.cast(smoothing / (effective_vocab_size - 1), 'float32')
+  off_value = smoothing / (effective_vocab_size - 1)
 
   # [batch_size, tgt_seq_len, vocab_size] 
   labels_one_hot = tf.one_hot(
       labels,
-      depth=effective_vocab_size,
+      depth=vocab_size,
       on_value=on_value,
       off_value=off_value)
 
@@ -45,7 +45,7 @@ def compute_loss(labels, logits, smoothing, vocab_size, padding_value=0):
   # because SOS_ID should never appear in the decoded sequence
   # [batch_size, tgt_seq_len]
   cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-      labels=labels_one_hot, logits=logits[:, :, 1:])
+      labels=labels_one_hot[:, :, 1:], logits=logits[:, :, 1:])
 
   # this is the entropy when the softmax'ed logits == groundtruth labels
   # so it should be deducted from `cross_entropy` to make sure the minimum 
