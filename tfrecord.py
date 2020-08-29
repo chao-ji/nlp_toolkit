@@ -91,6 +91,14 @@ def main(_):
 
 
 def dict_to_example(dictionary):
+  """Convert dict to protobuf example message.
+
+  Args:
+    dictionary: a dict mapping string to list of integers
+
+  Returns:
+    a protobuf example message.
+  """
   features = {}
   for k, v in dictionary.items():
     features[k] = tf.train.Feature(int64_list=tf.train.Int64List(value=v))
