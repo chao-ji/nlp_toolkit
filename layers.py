@@ -16,17 +16,20 @@ class EmbeddingLayer(tf.keras.layers.Layer):
 
   Note that Logits mode reuses the same weight matrix in Embedding mode.
   """
-  def __init__(self, vocab_size, hidden_size):
+  def __init__(self, vocab_size, hidden_size, scale_embeddings=True):
     """Constructor.
 
     Args:
       vocab_size: int scalar, num of tokens (including SOS and EOS) in the 
         vocabulary.
       hidden_size: int scalar, the hidden size of continuous representation.
+      scale_embeddings: (Optional) whether to scale the embeddings by square 
+        root of hidden size. Defaults to True.
     """
     super(EmbeddingLayer, self).__init__()
     self._vocab_size = vocab_size
     self._hidden_size = hidden_size
+    self._scale_embeddings = scale_embeddings
     self.add_weight('weights',
                     shape=[vocab_size, hidden_size],
                     initializer=tf.keras.initializers.RandomNormal(
@@ -79,7 +82,8 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     # [batch_size, seq_len, hidden_size]
     embeddings = tf.gather(embeddings, inputs)
 
-    embeddings *= self._hidden_size ** 0.5
+    if self._scale_embeddings:
+      embeddings *= self._hidden_size ** 0.5
     embeddings = tf.cast(embeddings, 'float32')
     return embeddings
 
