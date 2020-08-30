@@ -7,6 +7,7 @@ from absl import app
 from absl import flags
 
 import tokenization
+from .utils import dict_to_example
 
 
 FLAGS = flags.FLAGS
@@ -80,7 +81,7 @@ def main(_):
     if counter > 0 and counter % 1e5 == 0:
       print('Number of examples saved: %d.' % counter)
 
-    example = dict_to_example(
+    example = _dict_to_example(
         {'source': subtokenizer.encode(source_line, add_eos=True),
          'target': subtokenizer.encode(target_line, add_eos=True)})
     writers[shard].write(example.SerializeToString())
@@ -88,21 +89,6 @@ def main(_):
 
   for writer in writers:
     writer.close()
-
-
-def dict_to_example(dictionary):
-  """Convert dict to protobuf example message.
-
-  Args:
-    dictionary: a dict mapping string to list of integers
-
-  Returns:
-    a protobuf example message.
-  """
-  features = {}
-  for k, v in dictionary.items():
-    features[k] = tf.train.Feature(int64_list=tf.train.Int64List(value=v))
-  return tf.train.Example(features=tf.train.Features(feature=features))
 
 
 if __name__ == '__main__':
