@@ -81,7 +81,7 @@ def main(_):
     if counter > 0 and counter % 1e5 == 0:
       print('Number of examples saved: %d.' % counter)
 
-    example = _dict_to_example(
+    example = dict_to_example(
         {'source': subtokenizer.encode(source_line, add_eos=True),
          'target': subtokenizer.encode(target_line, add_eos=True)})
     writers[shard].write(example.SerializeToString())
