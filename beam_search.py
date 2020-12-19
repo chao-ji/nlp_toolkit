@@ -21,13 +21,14 @@ FINISHED_FLAGS = "FINISHED_FLAGS"
 class BeamSearch(object):
   """Beam Search Decoder.
 
-  This implementation of beam search adopts the aggressive strategy -- we 
-  maintain the maximum number of `beam_width` active threads of searches (i.e. 
-  sequences that have not yet reached EOS_ID), even though some active searches 
-  may eventually turn into finished ones. This way we can make sure that the 
-  maximum number of active candidate sequences are considered in each decoding 
-  step, because some of them may end up with higher scores than previously 
-  finished searches (i.e. those that reached EOS_ID).
+  This implementation of beam search adopts the "aggressive" strategy -- we DO
+  NOT reduce the number of active threads of searches even if some of them get
+  finished (i.e. hitting EOS) and hence should be removed from the candidate
+  set of active sequences. Instead, we simply swap them out and bring in new 
+  still-active searches to keep the size of candidate set unchanged. The benefit
+  is that it is possible for active sequences to end up with higher scores than 
+  previously finished searches. By not shrinking the "frontier" of the search, 
+  we can maximize the chance of getting top-scoring candidates.
 
   The loop invariants maintained over the search iterations are as follows:
 
@@ -52,11 +53,14 @@ class BeamSearch(object):
     """Constructor.
 
     Args:
-      decoding_fn: a callable, which is the interface to the Transformer model. 
+      decoding_fn: a callable, callback function used in the decoding step to
+        convert current token ids into scores of next-tokens over the
+        vocabulary.
+ 
         The input arguments are:
-          ids: tensor of shape [batch_size*beam_width, 1].
-          index: int scalar.
+          ids: int tensor of shape [batch_size*beam_width, 1].
           cache: nested dictionary of tensors [batch_size*beam_width, ...].
+          kwargs: (Optional) dict, additional optional arguments.
         The function returns a tuple of logits and the updated cache:
           logits: a tensor of shape [batch*beam_width, vocab_size].
           updated_cache: nested dictionary with the same structure as the
@@ -68,7 +72,7 @@ class BeamSearch(object):
       alpha: float scalar, defining the strength of length normalization.
       max_decode_length: int scalar, the maximum number of steps to decode
         a sequence.
-      eos_id: int scalar. ID of end of sentence token.
+      eos_id: int scalar, ID of end of sentence token.
     """
     self._decoding_fn = decoding_fn
     self._vocab_size = vocab_size
@@ -88,20 +92,10 @@ class BeamSearch(object):
 
     Args:
       initial_ids: int tensor of shape [batch_size], populated with initial ids 
-        (i.e. SOS_ID). 
-      initial_cache: dict of entries
-        'encoder_outputs': tensor of shape [batch_size, src_seq_len, 
-          hidden_size],
-        'padding_mask': tensor of shape [batch_size, 1, 1, src_seq_len],
-
-        and entries with keys 'layer_0',...,'layer_[decoder_num_layers - 1]'
-        where the value associated with key 'layer_*' is a dict with entries
-          'k': tensor of shape [batch_size, 0, num_heads, size_per_head],
-          'v': tensor of shape [batch_size, 0, num_heads, size_per_head]. 
-          'tgt_tgt_attention': tensor of shape [batch_size, num_heads, 
-            0, 0],
-          'tgt_src_attention': tensor of shape [batch_size, num_heads,
-            0, src_seq_len].
+        (e.g. SOS_ID). 
+      initial_cache: dict, storing tensors of shape [batch_size, ...], i.e. the 
+        context from which to draw information to predict the scores of the next
+        tokens. 
  
     Returns:
       finished_seqs: int tensor of shape [batch_size, beam_width, 
@@ -109,12 +103,7 @@ class BeamSearch(object):
       finished_scores: float tensor of shape [batch_size, beam_width], the 
         scores of finished decoded sequences over all beams.
       active_cache: a dict with the same structure as the input `initial_cache`,
-        except that the shapes of the values of key `k`, `v`, 
-        `tgt_tgt_attention`, `tgt_src_attention` are
-        [batch_size, beam_width, decoded_seq_len, num_heads, size_per_head],
-        [batch_size, beam_width, decoded_seq_len, num_heads, size_per_head],
-        [batch_size, beam_width, num_heads, decoded_seq_len, decoded_seq_len],
-        [batch_size, beam_width, num_heads, decoded_seq_len, src_seq_len].
+        except that each tensor's shape is now [batch_size, beam_width, ...]
     """
     state, state_shapes = self._create_initial_state(initial_ids, initial_cache)
 
@@ -177,9 +166,9 @@ class BeamSearch(object):
     active_seq = _tile_beam_width(initial_ids, self._beam_width)
     active_seq = tf.expand_dims(active_seq, axis=2)
 
-    # set the log-probs of all beams to -inf except that the first beam set to 
-    # zero, so that we are effectively using only the first beam in the first 
-    # decoding step 
+    # set the initial log-probs of all beams to -inf except that the first beam 
+    # set to zero, so that we are effectively using only the first beam in the 
+    # first decoding step 
     # active_log_probs: [batch_size, beam_width]
     active_log_probs = tf.tile(tf.constant(
         [[0.] + [-float("inf")] * (self._beam_width - 1)], dtype='float32'), 
@@ -212,7 +201,7 @@ class BeamSearch(object):
     equals `beam_width` at the beginning of each iteration.
     """
     def cache_shapes(tensor):
-      shape = [None] * (len(tensor.shape))
+      shape = [None] * len(tensor.shape)
       shape[1] = self._beam_width 
       return tf.TensorShape(shape)
 
@@ -322,34 +311,13 @@ class BeamSearch(object):
         `doubled_beam_width` sequences.
       topk_log_probs: float tensor of shape [batch_size, doubled_beam_width], 
         log-probs of the extended top-scoring `doubled_beam_width` sequences.
-      new_cache: dict of entries
-        'encoder_outputs': tensor of shape [batch_size, doubled_beam_width,
-          src_seq_len, hidden_size],
-        'padding_mask': tensor of shape [batch_size, doubled_beam_width, 1, 1, 
-          src_seq_len],
-        and entries with keys 'layer_0',...,'layer_[decoder_num_layers - 1]'
-        where the value associated with key 'layer_*' is a dict with entries
-          'k': tensor of shape [batch_size, doubled_beam_width, cur_index + 1, 
-            num_heads, size_per_head],
-          'v': tensor of shape [batch_size, doubled_beam_width, cur_index + 1, 
-            num_heads, size_per_head].
-          'tgt_tgt_attention': tensor of shape [batch_size, doubled_beam_width,
-            num_heads, cur_index + 1, cur_index + 1],
-          'tgt_src_attention': tensor of shape [batch_size, doubled_beam_width, 
-            num_heads, cur_index + 1, src_seq_len].
+      new_cache: dict where values of entries are tensors of shape 
+        [batch_size, doubled_beam_width, ...].
     """
     i = state[CUR_INDEX]
     # active_seq: [batch_size, beam_width, cur_index + 1]
     # active_log_probs: [batch_size, beam_width]
-    # active_cache[encoder_outputs]: [batch_size, beam_width, src_seq_len, 
-    #   hidden_size] 
-    # active_cache[padding_mask]: [batch_size, beam_width, 1, 1, src_seq_len]
-    # active_cache[layer_L][k or v]: [batch_size, beam_width, cur_index, 
-    #   num_heads, size_per_head]
-    # active_cache[layer_L][tgt_tgt_attention]: [batch_size, beam_width, 
-    #   num_heads, cur_index, cur_index]
-    # active_cache[layer_L][tgt_src_attention]: [batch_size, beam_width, 
-    #   num_heads, cur_index, src_seq_len]
+    # values of entries in dict actice_cache: [batch_size, beam_width, ...]
     active_seq = state[ACTIVE_SEQ]
     active_log_probs = state[ACTIVE_LOG_PROBS]
     active_cache = state[ACTIVE_CACHE]
@@ -361,8 +329,7 @@ class BeamSearch(object):
     flat_cache = map_structure(_flatten_beam_dim, active_cache)
 
     # flat_logits: [batch_size * beam_width, vocab_size]
-    # the `cur_index` of `k`, `v`, `tgt_tgt_attention`, `tgt_src_attention` 
-    # tensors  in `flat_cache` are incremented 
+    # tensors in dict flat_cache may have updated shapes and values.
     flat_logits, flat_cache = self._decoding_fn(
         flat_active_seq[:, -1:], flat_cache, index=i)
 
@@ -382,7 +349,7 @@ class BeamSearch(object):
         lambda t: _unflatten_beam_dim(t, self._batch_size, self._beam_width),
         flat_cache)
 
-    # convert logits to log probs
+    # covert logits to log probs
     candidate_log_probs = logits - tf.reduce_logsumexp(
         logits, axis=2, keepdims=True) 
 
