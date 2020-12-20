@@ -49,7 +49,8 @@ class BeamSearch(object):
                beam_width,
                alpha,
                max_decode_length,
-               eos_id):
+               eos_id,
+               logits_as_scores=True):
     """Constructor.
 
     Args:
@@ -73,6 +74,8 @@ class BeamSearch(object):
       max_decode_length: int scalar, the maximum number of steps to decode
         a sequence.
       eos_id: int scalar, ID of end of sentence token.
+      logits_as_scores: bool scalar, whether the outputs of `decoding_fn`
+        are logits (True) or probabilities (False). 
     """
     self._decoding_fn = decoding_fn
     self._vocab_size = vocab_size
@@ -81,6 +84,7 @@ class BeamSearch(object):
     self._alpha = alpha
     self._max_decode_length = max_decode_length
     self._eos_id = eos_id
+    self._logits_as_scores = logits_as_scores
 
     self._doubled_beam_width = 2 * self._beam_width
     self._length_normalization = lambda length: tf.pow(
@@ -328,30 +332,37 @@ class BeamSearch(object):
     flat_active_seq = _flatten_beam_dim(active_seq)
     flat_cache = map_structure(_flatten_beam_dim, active_cache)
 
-    # flat_logits: [batch_size * beam_width, vocab_size]
+    # flat_scores: [batch_size * beam_width, vocab_size]
     # tensors in dict flat_cache may have updated shapes and values.
-    flat_logits, flat_cache = self._decoding_fn(
+    flat_scores, flat_cache = self._decoding_fn(
         flat_active_seq[:, -1:], flat_cache, index=i)
 
-    # SOS should be excluded from the space of valid output tokens, so we push
-    # the logits of SOS_ID to -inf so that SOS will never appear in the decoded 
-    # sequence 
-    sos_mask = tf.constant(
-        [1] + [0] * (self._vocab_size - 1), dtype='float32') * NEG_INF 
-    flat_logits += sos_mask
+    if self._logits_as_scores:
+      # SOS should be excluded from the space of valid output tokens, so we push
+      # the logits of SOS_ID to -inf so that SOS will never appear in the 
+      # decoded sequence 
+      sos_mask = tf.constant(
+          [1] + [0] * (self._vocab_size - 1), dtype='float32') * NEG_INF 
+      flat_scores += sos_mask
+      convert_to_logprobs_fn = lambda scores: (
+          scores - tf.reduce_logsumexp(scores, axis=2, keepdims=True))
+
+    else:
+      sos_mask = tf.constant(
+          [0] + [1] * (self._vocab_size - 1), dtype='float32') 
+      flat_scores *= sos_mask
+      convert_to_logprobs_fn = lambda scores: tf.math.log(scores)
 
     # unflattening
-    # logits: [batch_size, beam_width, vocab_size]
+    # scores: [batch_size, beam_width, vocab_size]
     # tensors in `new_cache` now have shape [batch_size, beam_width, ...]
-    logits = _unflatten_beam_dim(
-        flat_logits, self._batch_size, self._beam_width)
+    scores = _unflatten_beam_dim(
+        flat_scores, self._batch_size, self._beam_width)
+    # covert scores to log probs
+    candidate_log_probs = convert_to_logprobs_fn(scores)
     new_cache = map_structure(
         lambda t: _unflatten_beam_dim(t, self._batch_size, self._beam_width),
         flat_cache)
-
-    # covert logits to log probs
-    candidate_log_probs = logits - tf.reduce_logsumexp(
-        logits, axis=2, keepdims=True) 
 
     # log_probs: [batch_size, beam_width, vocab_size]
     log_probs = candidate_log_probs + tf.expand_dims(active_log_probs, axis=2)

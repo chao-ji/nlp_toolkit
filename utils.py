@@ -3,6 +3,52 @@ import numpy as np
 import tensorflow as tf
 
 
+class CosineDecayLearningRateSchedule(
+    tf.keras.optimizers.schedules.LearningRateSchedule):
+  """Defines cosine decay learning rate."""
+  def __init__(
+      self, learning_rate, decay_steps, alpha, warmup_steps, warmup_lr):
+    """Constructor.
+
+    Args:
+      learning_rate: float scalar, the base learning rate.
+      decay_steps: int scalar, num of steps to decay over.
+      alpha: float scalar, minimum learning rate value as a fraction of 
+        learning rate.
+      warmup_steps: int scalar, the num of warm-up steps.
+      warmup_lr: float scalar, learning rate for warm-up steps. 
+    """
+    super(LearningRateSchedule, self).__init__()
+    self._learning_rate = learning_rate
+    self._decay_steps = decay_steps
+    self._alpha = alpha
+    self._warmup_steps = warmup_steps
+    self._warmup_lr = warmup_lr
+
+  def __call__(self, global_step):
+    """Computes learning rate. 
+
+    Args:
+      global_step: int scalar tensor, the current global step.
+
+    Returns:
+      learning_rate: float scalar tensor, the learning rate as a function of
+        the input `global_step`.
+    """
+    global_step = tf.cast(global_step, 'float32')
+
+    cosine_decay = 0.5 * (1 + tf.cos(np.pi * tf.minimum(global_step
+        - self._warmup_steps, self._decay_steps) / self._decay_steps))
+    decayed = (1 - self._alpha) * cosine_decay + self._alpha
+    decayed_learning_rate = self._learning_rate * decayed
+
+    decayed_learning_rate = tf.where(global_step < self._warmup_steps,
+                                     self._warmup_lr,
+                                     decayed_learning_rate)
+
+    return decayed_learning_rate
+
+
 class LearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
   """Learning rate schedule."""
   def __init__(self, learning_rate, hidden_size, warmup_steps):
