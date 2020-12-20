@@ -1,4 +1,6 @@
 """Utility functions and classes. """
+import heapq
+
 import numpy as np
 import tensorflow as tf
 
