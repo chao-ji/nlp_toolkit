@@ -1,14 +1,16 @@
-""""Convert text corpus (raw text files) into TFRecord files."""
+""""Convert text corpus (raw text files) into TFRecord files for language 
+modeling.
+"""
+import os
+
 import tensorflow as tf
 import numpy as np
 from absl import app
 from absl import flags
 
 from tokenization import create_tokenizer_from_raw_text_files
-from tokenization import create_subtokenizer_from_raw_text_files
+from utils import dict_to_example
 
-def _int64_feature(values):
-  return tf.train.Feature(int64_list=tf.train.Int64List(value=values))
 
 FLAGS = flags.FLAGS
 
@@ -27,18 +29,19 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'output_dir', None, 'Path to the directory that the generated TFRecord '
         'files will be written to')
+flags.DEFINE_string(
+    'output_filename', 'lm.tfrecord', 'Name of the output file.')
 
 
 def main(_):
   filenames = FLAGS.filenames
+  min_count = FLAGS.min_count
   batch_size = FLAGS.batch_size
   tgt_len = FLAGS.tgt_len
-  min_count = FLAGS.min_count
   vocab_name = FLAGS.vocab_name
+  output_dir = FLAGS.output_dir
+  output_filename = FLAGS.output_filename
   tokenizer = create_tokenizer_from_raw_text_files(filenames)
-  
-  tokenizer = create_subtokenizer_from_raw_text_files(filenames, 32000, 320, file_byte_limit=539209157)
-  tokenizer.save_to_file(vocab_name)
 
   data = [] 
   for filename in filenames:
@@ -47,7 +50,7 @@ def main(_):
         data.extend(tokenizer.encode(line.strip(), add_eos=True)) 
   data = np.array(data)
 
-  writer = tf.io.TFRecordWriter('save.tfrecord')
+  writer = tf.io.TFRecordWriter(os.path.join(output_dir, output_filename))
 
   num_steps = data.size // batch_size  
   data = data[:batch_size * num_steps]
@@ -59,57 +62,13 @@ def main(_):
       inputs = data[idx, i:i + cur_tgt_len]
       labels = data[idx, i + 1: i + cur_tgt_len + 1]
 
-      feature = {
-          "inputs": _int64_feature(inputs),
-          "labels": _int64_feature(labels),
-      }
 
-      example = tf.train.Example(features=tf.train.Features(feature=feature))
+      example = dict_to_example({'inputs': inputs, 'labels': labels})
       writer.write(example.SerializeToString())
 
 if __name__ == '__main__':
   flags.mark_flag_as_required('filenames')
   flags.mark_flag_as_required('output_dir')
   app.run(main)
-
-
-"""
-if __name__ == '__main__':
-
-  fn = '/home/chaoji/Desktop/transformer-xl/tf/data/wikitext-103/train.txt'
-  tokenizer = create_tokenizer_from_raw_text_files([fn])
-
-  a = []
-  with open(fn) as f:
-    for line in f:
-      a.extend(tokenizer.encode(line.strip(), add_eos=True))
-  import numpy as np
-  data = np.array(a)
-
-
-  writer = tf.io.TFRecordWriter('save.tfrecord')
-  batch_size = 32
-
-  num_step = len(data) // batch_size
-  data = data[:batch_size * num_step]
-  data = data.reshape(batch_size, num_step)
-
-
-  tgt_len = 224
-
-  for i in range(0, data.shape[1] - 1, tgt_len):
-    cur_tgt_len = min(data.shape[1] - 1 - i, tgt_len)
-    for idx in range(batch_size):
-      inputs = data[idx, i:i + cur_tgt_len]
-      labels = data[idx, i + 1: i + cur_tgt_len + 1]
-
-      feature = {
-          "inputs": _int64_feature(inputs),
-          "labels": _int64_feature(labels),
-      }
-
-      example = tf.train.Example(features=tf.train.Features(feature=feature))
-      writer.write(example.SerializeToString())
-"""
 
 

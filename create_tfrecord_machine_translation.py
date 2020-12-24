@@ -7,7 +7,7 @@ from absl import app
 from absl import flags
 
 import tokenization
-from .utils import dict_to_example
+from utils import dict_to_example
 
 
 FLAGS = flags.FLAGS
