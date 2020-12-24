@@ -20,7 +20,7 @@ class CosineDecayLearningRateSchedule(
       warmup_steps: int scalar, the num of warm-up steps.
       warmup_lr: float scalar, learning rate for warm-up steps. 
     """
-    super(LearningRateSchedule, self).__init__()
+    super(CosineDecayLearningRateSchedule, self).__init__()
     self._learning_rate = learning_rate
     self._decay_steps = decay_steps
     self._alpha = alpha
