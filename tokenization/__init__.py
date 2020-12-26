@@ -10,3 +10,4 @@ from .word import EOS
 from .word import UNK
 from .word import WholeWordTokenizer
 from .word import create_tokenizer_from_raw_text_files
+from .word import restore_tokenizer_from_vocab_files

@@ -3,6 +3,8 @@ ids, and decodes the whole word token ids back to the raw text.
 """
 import collections
 
+import tensorflow as tf
+
 UNK = '<unk>'
 EOS = '<eos>'
 
@@ -31,6 +33,8 @@ class WholeWordTokenizer(object):
       token_list: a list of strings, whole word tokens.
       lower_case: bool scalar, whether to lower-case tokens.
     """
+    if lower_case:
+      token_list = [token.lower() for token in token_list]
     self._token_list = token_list
     self._token_dict = {token: index for index, token in enumerate(token_list)}
     self._lower_case = lower_case
@@ -38,6 +42,17 @@ class WholeWordTokenizer(object):
   @property
   def vocab_size(self):
     return len(self._token_list)
+
+  def save_to_file(self, filename):
+    """Save the tokenizer's vocabulary to a '.token' file, from which the same 
+    tokenizer can be restored later.
+    
+    Args:
+      filename: string scalar, the name of the vocabulary file.
+    """
+    with tf.io.gfile.GFile(filename + '.token', mode='w') as f:
+      for token in self._token_list:
+        f.write("%s\n" % token)
 
   def encode(self, string, add_eos=False):
     """Encodes a raw string into token ids.
@@ -99,7 +114,7 @@ def create_tokenizer_from_raw_text_files(filenames,
   token_list = [EOS]
 
   for filename in filenames:
-    with open(filename, 'r') as f:
+    with tf.io.gfile.GFile(filename, 'r') as f:
       for line in f:
         tokens = line.strip().split()
         counter.update(tokens)
@@ -116,4 +131,22 @@ def create_tokenizer_from_raw_text_files(filenames,
 
   tokenizer = WholeWordTokenizer(token_list)
 
+  return tokenizer
+
+
+def restore_tokenizer_from_vocab_files(filename, lower_case=False):
+  """Restores the tokenizer from vocabulary files ('*.token)
+
+  Args:
+    filename: string scalar, the name of the vocabulary file.
+    lower_case: bool scalar, whether to lower-case tokens.
+
+  Returns:
+    tokenizer: a Tokenizer instance.
+  """
+  token_list = []
+  with tf.io.gfile.GFile(filename + '.token', mode='r') as f:
+    for line in f:
+      token_list.append(line.strip())
+  tokenizer = WholeWordTokenizer(token_list, lower_case)
   return tokenizer
