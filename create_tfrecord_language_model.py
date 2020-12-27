@@ -23,7 +23,11 @@ Usage:
       --filenames=file1.txt,file2.txt... \
       --vocab_name=vocab_name
       --use_exist_vocab    
+
+Configuration of the dataset will be written to .json files, which will be 
+needed when building the tf.data.Dataset instance.
 """
+import json
 import os
 
 import tensorflow as tf
@@ -38,7 +42,7 @@ from utils import dict_to_example
 FLAGS = flags.FLAGS
 
 flags.DEFINE_list(
-    'filenames', None, 'Names of files storing text corpus.')
+    'filenames', None, 'Names of files (comma-separated) storing text corpus.')
 flags.DEFINE_bool(
     'subword', False, 'Whether to use subword tokenizer. Defaults to False.')
 flags.DEFINE_integer(
@@ -57,15 +61,16 @@ flags.DEFINE_float(
 flags.DEFINE_integer(
     'batch_size', 32, 'The number of sequence segments packed in a batch.')
 flags.DEFINE_integer(
-    'tgt_len', 224, 'Length of sequence segment.')
+    'seq_len', 224, 'Length of sequence segment.')
 flags.DEFINE_string(
     'vocab_name', 'vocab', 'Name of the file that the vocabulary will be saved '
         ' to or restored from. Contains one token per line.')
 flags.DEFINE_string(
     'output_dir', '.', 'Path to the directory that the generated TFRecord '
-        'files will be written to')
+        'files will be written to.')
 flags.DEFINE_string(
-    'output_filename', 'data.tfrecord', 'Name of the output file.')
+    'output_filename', 'data', 'Prefix of the name of output .tfrecord and '
+        '.json file.')
 flags.DEFINE_bool(
     'use_exist_vocab', False, 'Whether to create (sub)tokenizer from existing '
         ' vocabualry. Defaults to False.')
@@ -79,11 +84,17 @@ def main(_):
   threshold = FLAGS.threshold
   file_byte_limit = FLAGS.file_byte_limit
   batch_size = FLAGS.batch_size
-  tgt_len = FLAGS.tgt_len
+  seq_len = FLAGS.seq_len
   vocab_name = FLAGS.vocab_name
   output_dir = FLAGS.output_dir
   output_filename = FLAGS.output_filename
   use_exist_vocab = FLAGS.use_exist_vocab
+
+  with tf.io.gfile.GFile(os.path.join(
+      output_dir, output_filename + '.json'), 'w') as f: 
+    json.dump({'seq_len': seq_len, 
+               'batch_size': batch_size, 
+               'subword': subword}, f)
 
   if subword:
     if use_exist_vocab:
@@ -115,17 +126,18 @@ def main(_):
         data.extend(tokenizer.encode(line.strip(), add_eos=True)) 
   data = np.array(data)
 
-  writer = tf.io.TFRecordWriter(os.path.join(output_dir, output_filename))
+  writer = tf.io.TFRecordWriter(
+      os.path.join(output_dir, output_filename + '.tfrecord'))
 
   num_steps = data.size // batch_size  
   data = data[:batch_size * num_steps]
   data = data.reshape(batch_size, num_steps)
 
-  for i in range(0, data.shape[1] - 1, tgt_len):
-    cur_tgt_len = min(data.shape[1] - 1 - i, tgt_len)
+  for i in range(0, data.shape[1] - 1, seq_len):
+    cur_seq_len = min(data.shape[1] - 1 - i, seq_len)
     for idx in range(batch_size):
-      inputs = data[idx, i:i + cur_tgt_len]
-      labels = data[idx, i + 1: i + cur_tgt_len + 1]
+      inputs = data[idx, i:i + cur_seq_len]
+      labels = data[idx, i + 1: i + cur_seq_len + 1]
 
       example = dict_to_example({'inputs': inputs, 'labels': labels})
       writer.write(example.SerializeToString())

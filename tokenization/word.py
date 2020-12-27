@@ -50,7 +50,7 @@ class WholeWordTokenizer(object):
     Args:
       filename: string scalar, the name of the vocabulary file.
     """
-    with tf.io.gfile.GFile(filename + '.token', mode='w') as f:
+    with tf.io.gfile.GFile(filename + '.tokens', mode='w') as f:
       for token in self._token_list:
         f.write("%s\n" % token)
 
@@ -145,7 +145,7 @@ def restore_tokenizer_from_vocab_files(filename, lower_case=False):
     tokenizer: a Tokenizer instance.
   """
   token_list = []
-  with tf.io.gfile.GFile(filename + '.token', mode='r') as f:
+  with tf.io.gfile.GFile(filename + '.tokens', mode='r') as f:
     for line in f:
       token_list.append(line.strip())
   tokenizer = WholeWordTokenizer(token_list, lower_case)
