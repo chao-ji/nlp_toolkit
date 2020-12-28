@@ -1,3 +1,3 @@
-from .sequence_transduction import DynamicBatchDatasetBuilder
-from .sequence_transduction import StaticBatchDatasetBuilder
-from .sequence_transduction import SequenceClassifierDatasetBuilder  
+from .dataset_builder import DynamicBatchDatasetBuilder
+from .dataset_builder import StaticBatchDatasetBuilder
+from .dataset_builder import SequenceClassifierDatasetBuilder 

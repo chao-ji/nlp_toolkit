@@ -1,7 +1,11 @@
-"""Defines Sequence Transduction dataset builder."""
+"""Defines dataset builders."""
 import os
 
 import tensorflow as tf
+
+from .parse_fn import parse_fn_sequence_pair
+from .parse_fn import parse_fn_single_sequence
+from .parse_fn import parse_fn_sequence_classification
 
 
 # Buffer size for reading TFRecord files. Should be generally larger than the 
@@ -66,67 +70,6 @@ def create_and_preprocess(filenames,
     dataset = dataset.filter(filter_fn)
 
   return dataset
-
-
-def parse_fn_sequence_pair(serialized_example):
-  """Deserializes a protobuf message into a source and target (batched) sequence
-  of token IDs for sequence transduction.
-
-  Args:
-    serialized_example: string scalar tensor, serialized example of 
-      a source-target pair.
-
-  Returns:
-    src_tokens_ids: int tensor of shape [src_seq_len], token ids of source
-      sequence.
-    tgt_tokens_ids: int tensor of shape [tgt_seq_len], token ids of target
-      sequence.
-  """
-  parse_dict = {'source': tf.io.VarLenFeature(tf.int64),
-                'target': tf.io.VarLenFeature(tf.int64)}
-
-  parsed = tf.io.parse_single_example(serialized_example, parse_dict)
-  src_token_ids = tf.sparse.to_dense(parsed['source'])
-  tgt_token_ids = tf.sparse.to_dense(parsed['target'])
-  return src_token_ids, tgt_token_ids
-
-
-def parse_fn_single_sequence(serialized_example):
-  """Deserializes a protobuf message into a single (batched) sequence of token 
-  IDs.
-
-  Args:
-    serialized_example: string scalar tensor, serialized example of 
-      a token IDs.
-
-  Returns:
-    token_ids: int tensor of shape [seq_len], token ids.
-  """
-  parse_dict = {'token_ids': tf.io.VarLenFeature(tf.int64)}
-  parsed = tf.io.parse_single_example(serialized_example, parse_dict)
-  token_ids = tf.sparse.to_dense(parsed['token_ids'])
-  return token_ids
-
-
-def parse_fn_sequence_classification(serialized_example):
-  """Deserializes a protobuf message into a single (batched) sequence of token
-
-  Args:
-    serialized_example: string scalar tensor, serialized example of 
-      a token IDs and sequence label.
-  
-  Returns:
-    token_ids: int tensor of shape [seq_len], token_ids.
-    label: int scalar tensor, sequence class label.
-  """
-  parse_dict = {'token_ids': tf.io.VarLenFeature(tf.int64),
-                'label': tf.io.VarLenFeature(tf.int64)}
-
-  parsed = tf.io.parse_single_example(serialized_example, parse_dict)
-  token_ids = tf.sparse.to_dense(parsed['token_ids'])
-  label = tf.sparse.to_dense(parsed['label'])
-
-  return token_ids, label
 
 
 class BaseSequenceTransductionDatasetBuilder(object):
