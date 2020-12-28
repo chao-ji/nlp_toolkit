@@ -21,8 +21,8 @@ def parse_fn_sequence_pair(serialized_example, keys=('source', 'target')):
                 keys[1]: tf.io.VarLenFeature(tf.int64)}
 
   parsed = tf.io.parse_single_example(serialized_example, parse_dict)
-  src_token_ids = tf.sparse.to_dense(parsed[keys[0]])
-  tgt_token_ids = tf.sparse.to_dense(parsed[keys[1]])
+  src_token_ids = tf.cast(tf.sparse.to_dense(parsed[keys[0]]), 'float32')
+  tgt_token_ids = tf.cast(tf.sparse.to_dense(parsed[keys[1]]), 'float32')
   return src_token_ids, tgt_token_ids
 
 
