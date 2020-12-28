@@ -2,7 +2,8 @@
 import tensorflow as tf
 
 
-def parse_fn_sequence_pair(serialized_example, keys=('source', 'target')):
+def parse_fn_sequence_pair(
+    serialized_example, keys=('source', 'target'), dtype=tf.int64):
   """Deserializes a protobuf message into a source and target (batched) sequence
   of token IDs for sequence transduction.
 
@@ -10,6 +11,7 @@ def parse_fn_sequence_pair(serialized_example, keys=('source', 'target')):
     serialized_example: string scalar tensor, serialized example of 
       a source-target pair.
     keys: tuple of two strings, keys of the sequence pair parsing dict.
+    dtype: string or tensorflow dtype, data type.
 
   Returns:
     src_tokens_ids: int tensor of shape [src_seq_len], token ids of source
@@ -21,8 +23,8 @@ def parse_fn_sequence_pair(serialized_example, keys=('source', 'target')):
                 keys[1]: tf.io.VarLenFeature(tf.int64)}
 
   parsed = tf.io.parse_single_example(serialized_example, parse_dict)
-  src_token_ids = tf.cast(tf.sparse.to_dense(parsed[keys[0]]), 'float32')
-  tgt_token_ids = tf.cast(tf.sparse.to_dense(parsed[keys[1]]), 'float32')
+  src_token_ids = tf.cast(tf.sparse.to_dense(parsed[keys[0]]), dtype)
+  tgt_token_ids = tf.cast(tf.sparse.to_dense(parsed[keys[1]]), dtype)
   return src_token_ids, tgt_token_ids
 
 
