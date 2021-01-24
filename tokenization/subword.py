@@ -374,7 +374,7 @@ def _unescape_token(token):
   """
   token = token.replace('\\u', '_')
 
-  m = re.match(_OOA_CHAR_REGEX, token)
+  m = re.search(_OOA_CHAR_REGEX, token)
   if m is not None:
     try:
       return re.sub(_OOA_CHAR_REGEX, chr(int(m.group(1))), token)
