@@ -34,7 +34,9 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     self.add_weight('weights',
                     shape=[vocab_size, hidden_size],
                     initializer=tf.keras.initializers.RandomNormal(
-                        mean=0., stddev=hidden_size ** -0.5))
+                        mean=0., stddev=hidden_size ** -0.5),
+                    dtype='float32',
+                    trainable=True)
 
   def call(self, inputs, mode):
     """Either converts token ids to embeddings, or embeddings to logits.
@@ -64,7 +66,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     """Returns the embedding matrix (of shape [vocab_size, hidden_size]). Note 
     that SOS token (index 0) has a fixed (not trainable) zero embedding vector.
     """
-    return tf.pad(self.weights[0][1:], [[1, 0], [0, 0]])
+    return tf.pad(self.trainable_variables[0][1:], [[1, 0], [0, 0]])
 
   def _tokens_to_embeddings(self, inputs):
     """The dense layer that converts token IDs to embedding vectors.
@@ -85,7 +87,6 @@ class EmbeddingLayer(tf.keras.layers.Layer):
 
     if self._scale_embeddings:
       embeddings *= self._hidden_size ** 0.5
-    embeddings = tf.cast(embeddings, 'float32')
     return embeddings
 
   def _embeddings_to_logits(self, decoder_outputs):
@@ -101,13 +102,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     """
     # [vocab_size, hidden_size]
     embeddings = self._get_vocab_embeddings()
-    batch_size = tf.shape(decoder_outputs)[0]
-    tgt_seq_len = tf.shape(decoder_outputs)[1]
-
-    # [batch_size * tgt_seq_len, hidden_size]
-    decoder_outputs = tf.reshape(decoder_outputs, [-1, self._hidden_size])
-    logits = tf.matmul(decoder_outputs, embeddings, transpose_b=True)
-    logits = tf.reshape(logits, [batch_size, tgt_seq_len, self._vocab_size])
+    logits = tf.einsum('NTD,VD->NTV', decoder_outputs, embeddings)
     return logits
 
 
@@ -236,6 +231,13 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       labels: (Optional) int tensor of shape [batch_size, seq_len], the 
         groundtruth next-token ids. Must be provided for mode 'loss'.
       mode: (Optional) string scalar, either 'embedding', 'softmax' or 'loss'. 
+
+    Returns:
+      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in 
+        "embedding" mode, the sequences in continuous representation; or float
+        tensor of shape [batch_size, seq_len, vocab_size], the per-token 
+        probability distribution over tokens in vocabulary; or float tensor of 
+        shape [head_size + tail1_size + tail2_size + ...]. 
     """
     if mode == 'embedding':
       return self._tokens_to_embedding(inputs)
@@ -259,6 +261,7 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       embeddings: float tensor of shape [batch_size, seq_len, hidden_size], the
         sequences in continuous representation.
     """
+    # [batch_size, seq_len, hidden_size]
     output_shape = tf.concat([tf.shape(inputs), [self._hidden_size]], axis=0)
     embeddings = []
 
@@ -273,8 +276,12 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       mask = tf.logical_and(inputs >= low, inputs < high)
       curr_ids = tf.boolean_mask(inputs, mask) - low
 
+      # [num_valid, hidden_size]
       curr_embeddings = tf.matmul(
           tf.gather(weights[i], curr_ids), weight_projs[i])
+
+      # [num_valid, 2]
+
       mask_idx = tf.cast(tf.where(mask), 'int32')
       # [batch_size, seq_len, hidden_size]
       embeddings.append(tf.scatter_nd(mask_idx, curr_embeddings, output_shape))
@@ -299,7 +306,6 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
 
     # [batch_size, seq_len, cutoffs[0] + num_tails]
     head_logits = tf.matmul(inputs, head_weight)
-    #head_logits = tf.matmul(tf.matmul(inputs, head_weight_proj), head_weight)
     head_softmax = tf.nn.softmax(head_logits)
 
     softmax_list = [head_softmax[:, :, :self._cutoffs[0]]]
@@ -354,7 +360,6 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       training_losses.append(tail_loss)
 
     head_logits = tf.matmul(inputs, head_weight)
-    #head_logits = tf.matmul(tf.matmul(inputs, head_weight_proj), head_weight)
 
     head_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=head_labels, logits=head_logits)
