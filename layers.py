@@ -274,6 +274,8 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     for i in range(len(self._cutoffs)):
       low, high = 0 if i == 0 else self._cutoffs[i - 1], self._cutoffs[i]
       mask = tf.logical_and(inputs >= low, inputs < high)
+
+      # [num_valid]
       curr_ids = tf.boolean_mask(inputs, mask) - low
 
       # [num_valid, hidden_size]
@@ -281,7 +283,6 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
           tf.gather(weights[i], curr_ids), weight_projs[i])
 
       # [num_valid, 2]
-
       mask_idx = tf.cast(tf.where(mask), 'int32')
       # [batch_size, seq_len, hidden_size]
       embeddings.append(tf.scatter_nd(mask_idx, curr_embeddings, output_shape))
@@ -308,12 +309,13 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     head_logits = tf.matmul(inputs, head_weight)
     head_softmax = tf.nn.softmax(head_logits)
 
+    # [batch_size, seq_len, cutoffs[0]]
     softmax_list = [head_softmax[:, :, :self._cutoffs[0]]]
     for i in range(self._num_tails):
       tail_weight_proj = self.trainable_variables[i*2+2]
       tail_weight = self.trainable_variables[i*2+3]
 
-      # [batch_size, seq_len, cutoffs[i + 1] - cutoffs[i]]
+      # [batch_size, seq_len, tail_size]
       tail_logits = tf.matmul(tf.matmul(inputs, tail_weight_proj), tail_weight)
       tail_softmax = tf.nn.softmax(tail_logits)
       index = self._cutoffs[0] + i
@@ -333,28 +335,40 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
         next-token ids. 
 
     Returns:
-      losses: float tensor of shape [head_size + tail1_size + tail2_size + ...],
-        the per-token loss, where `head_size = batch_size * seq_len`, and 
-        `tail_size{i}` is the num of token ids in `labels` that fall within in
-        the range of token indices of tail partition `i`.
+      losses: float tensor of shape [batch_size * seq_len + num_valid1 + 
+        num_valid2 + ...], the per-token loss, where `num_valid{i}` is the 
+        num of token ids in `labels` that fall within in the range of token 
+        indices of tail partition `i`.
     """
     head_weight_proj, head_weight = self.trainable_variables[:2]
 
     training_losses = []
     head_labels = labels
+
+    # computes loss for tails
     for i in range(1, len(self._cutoffs)):
       tail_weight_proj = self.trainable_variables[i*2]
       tail_weight = self.trainable_variables[i*2+1]
 
       low, high = self._cutoffs[i - 1], self._cutoffs[i]
       mask = tf.logical_and(labels >= low, labels < high)
+
+      # set the head label to `cutoffs[0] + i - 1` for tokens within
+      # tail partition `i` 
+      # [batch_size, seq_len]
       head_labels = tf.where(mask, self._cutoffs[0] + i - 1, head_labels)
 
+      # [num_valid, hidden_size]
       tail_inputs = tf.boolean_mask(inputs, mask)
+
+      # [num_valid, tail_size]
       tail_logits = tf.matmul(tf.matmul(
           tail_inputs, tail_weight_proj), tail_weight)
+
+      # [num_valid]
       tail_labels = tf.boolean_mask(labels - self._cutoffs[i - 1], mask)
 
+      # [num_valid]
       tail_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
           labels=tail_labels, logits=tail_logits)
       training_losses.append(tail_loss)
