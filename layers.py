@@ -1,4 +1,4 @@
-"""Functions that add layers/operations to TensorFlow's computation graph."""
+"""Functions that add layers/operations to TensorFlow's computational graph."""
 import tensorflow as tf
 
 
@@ -15,26 +15,33 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     Weight: [vocab_size(V), hidden_size(D)]
     Output: [batch_size(N), seq_len(T), vocab_size(V)]
 
-  Note that Logits mode reuses the same weight matrix in Embedding mode.
+  Note that Logits mode and Embedding mode share the same weight matrix.
   """
   def __init__(self, vocab_size, hidden_size, scale_embeddings=True):
     """Constructor.
 
     Args:
-      vocab_size: int scalar, num of tokens (including SOS and EOS) in the 
+      vocab_size: int scalar, num of tokens (including SOS and EOS) in the
         vocabulary.
       hidden_size: int scalar, the hidden size of continuous representation.
-      scale_embeddings: bool scalar, whether to scale the embeddings by square 
+      scale_embeddings: bool scalar, whether to scale the embeddings by square
         root of hidden size. Defaults to True.
     """
     super(EmbeddingLayer, self).__init__()
     self._vocab_size = vocab_size
     self._hidden_size = hidden_size
     self._scale_embeddings = scale_embeddings
-    self.add_weight('weights',
-                    shape=[vocab_size, hidden_size],
+
+  def build(self, inputs_shape):
+    """Creates weights of this layer.
+
+    Args:
+        inputs_shape: tuple of ints or 1-D int tensor. Not used.
+    """
+    self.add_weight(name='weights',
+                    shape=[self._vocab_size, self._hidden_size],
                     initializer=tf.keras.initializers.RandomNormal(
-                        mean=0., stddev=hidden_size ** -0.5),
+                        mean=0., stddev=self._hidden_size ** -0.5),
                     dtype='float32',
                     trainable=True)
 
@@ -43,14 +50,14 @@ class EmbeddingLayer(tf.keras.layers.Layer):
 
     Args:
       inputs: int tensor of shape [batch_size, seq_len] in "embedding" mode, the
-        sequences token ids; or float tensor of shape [batch_size, seq_len, 
+        sequences token ids; or float tensor of shape [batch_size, seq_len,
         hidden_size] in "logits" mode, the sequences in continuous 
         representation.
       mode: string scalar, "embedding" or "logits".
 
     Returns:
-      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in 
-        "embedding" mode, the sequences in continuous representation; or float 
+      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in
+        "embedding" mode, the sequences in continuous representation; or float
         tensor of shape [batch_size, seq_len, vocab_size] in "logits" mode, the
         logits preceding the softmax.
     """
@@ -93,7 +100,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     """The dense layer preceding the softmax that computes the logits.
 
     Args:
-      decoder_outputs: float tensor of shape [batch_size, tgt_seq_len, 
+      decoder_outputs: float tensor of shape [batch_size, tgt_seq_len,
         hidden_size], the sequences in continuous representation.
 
     Returns:
@@ -110,18 +117,20 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
   """Implements adaptive input representation and adaptive softmax in a single
   layer.
 
-  Adaptive input and adaptive softmax are two closely related techniques 
+  Adaptive input and adaptive softmax are two closely related techniques
   designed to speed up computation for neural network based language models (
-  e.g. RNN, Transformer) with very large vocabulary, by reducing the hidden size
-  of the embedding vectors of LOW-frequency tokens. Briefly, the tokens in the 
-  vocabulary are sorted in descending order of frequency, and split up into 
-  disjoint partitions (known as "head", "tail1", "tail2", ...), where "head" 
-  contains the most high-frequency tokens, and "tail" partitions contain 
-  increasingly less frequent tokens, and the token-to-embedding and 
-  embedding-to-softmax computation are performed separately for each partition.
+  e.g. RNN, TransformerXL) with very large vocabulary size. The idea is to
+  incrementally reduce the hidden size of the embedding vectors of tokens with
+  increasingly lower frequency. Briefly, the tokens in the vocabulary are sorted
+  in descending order of frequency, and split up into disjoint partitions (
+  "head", "tail1", "tail2", ...), where "head" contains the most high-frequency
+  tokens, and "tail1", "tail2", ... contain less frequent tokens. The embedding
+  vectors (with REDUCED hidden size) of tokens in "tail" partitions will finally
+  be projected through a dense layer to the space with the same hidden size as
+  in the "head" partition.
 
-  Note that in this implementation the two modules share the same set of 
-  weights. For general description, refer to https://arxiv.org/abs/1809.10853 
+  Note that in this implementation the two modules share the same set of
+  weights. For general description, refer to https://arxiv.org/abs/1809.10853
   and https://arxiv.org/abs/1609.04309
 
   It operates in three modes:
@@ -138,13 +147,15 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       embedding vectors and groundtruth next-token ids.
       Input: [batch_size(N), seq_len(T), hidden_size(D)], [batch_size(N), 
         seq_len(T)]
-      Output: [head_size + tail_size1 + tail_size2 + ...]
+      Output: [batch_size(N) * seq_len(T) + num_valid_tail1 + num_valid_tail2 + 
+        ...]
   """
   def __init__(self,
                hidden_size,
                cutoffs,
                project_factor=4,
-               kernel_initializer='glorot_uniform'):
+               kernel_initializer='glorot_uniform',
+               scale_embeddings=True):
     """Constructor.
 
     Args:
@@ -161,12 +172,15 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
         head has hidden size `hidden_size`, while tokens in the first tail has
         reduced hidden size `hidden_size // project_factor`, and so on.
       kernel_initializer: string scalar, the weight initializer.
+      scale_embeddings: bool scalar, whether to scale the embeddings by square 
+        root of hidden size. Defaults to True.
     """
     super(AdaptiveInputSoftmax, self).__init__()
     self._hidden_size = hidden_size
     self._cutoffs = cutoffs
     self._project_factor = project_factor
-    self._kernel_initializer = 'glorot_uniform'
+    self._kernel_initializer = kernel_initializer,
+    self._scale_embeddings = scale_embeddings
 
     self._num_tails = len(self._cutoffs) - 1
 
@@ -175,16 +189,16 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
 
     Example:
 
-    Given `cutoffs = [b0, b1, b2, V]` and hidden size `hidden_size`, there is 1 
-    head partition, `[0, b0)`, and 3 tail partitions, `[b0, b1)`, `[b1, b2)`, 
-    `[b2, V)`. 
-    We create trainable weights for 
-      - head partition, i.e. `head_weight_proj: [hidden_size, hidden_size]` and 
+    Given `cutoffs = [b0, b1, b2, V]` and hidden size `hidden_size`, there is 1
+    head partition, `[0, b0)`, and 3 tail partitions, `[b0, b1)`, `[b1, b2)`,
+    `[b2, V)`.
+    We create trainable weights for
+      - head partition, i.e. `head_weight_proj: [hidden_size, hidden_size]` and
         `head_weight: [hidden_size, b0 + 3]`
-      - tail partition i, i.e. `tail_weight_proj{i}: [hidden_size, 
-        project_size{i}]` and `tail_weight{i}`: [projet_size{i}, cutoffs[i + 1]
-         - cutoffs[i]], where `project_size{i}` is the reduced hidden size for 
-        tail `i`, and `i` = 0, 1, 2 
+      - tail partition `i`, i.e. `tail_weight_proj{i}: [hidden_size,
+        project_size{i}]` and `tail_weight{i}`: [projet_size{i}, cutoffs[i]
+         - cutoffs[i - 1]], where `project_size{i}` is the reduced hidden size
+        for tail `i`, and `i` = 1, 2, 3
 
     Args:
       inputs_shape: tuple of ints or 1-D int tensor. Not used.
@@ -224,8 +238,8 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
 
     Args:
       inputs: float tensor of shape [batch_size, seq_len, hidden_size], 
-        embedding representation of tokens, which are outputs from the model 
-        (e.g. RNN or Transformer), for mode 'softmax' and 'loss'; Or int tensor 
+        embedding representation of tokens, which are outputs from the model (
+        e.g. RNN or TransformerXL), for mode 'softmax' and 'loss'; Or int tensor
         of shape [batch_size, seq_len], the sequences token ids, for mode 
         'embedding'.
       labels: (Optional) int tensor of shape [batch_size, seq_len], the 
@@ -237,7 +251,8 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
         "embedding" mode, the sequences in continuous representation; or float
         tensor of shape [batch_size, seq_len, vocab_size], the per-token 
         probability distribution over tokens in vocabulary; or float tensor of 
-        shape [head_size + tail1_size + tail2_size + ...]. 
+        shape [batch_size(N) * seq_len(T) + num_valid_tail1 + num_valid_tail2 + 
+        ...].
     """
     if mode == 'embedding':
       return self._tokens_to_embedding(inputs)
@@ -268,17 +283,17 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     weights = [tf.transpose(weight) for weight
         in self.trainable_variables[1::2]]
     weights[0] = weights[0][:self._cutoffs[0]]
-    weight_projs = [tf.transpose(weight) for weight
+    weight_projs = [tf.transpose(weight_proj) for weight_proj
         in self.trainable_variables[::2]]
 
     for i in range(len(self._cutoffs)):
       low, high = 0 if i == 0 else self._cutoffs[i - 1], self._cutoffs[i]
       mask = tf.logical_and(inputs >= low, inputs < high)
 
-      # [num_valid]
+      # [num_valid_entries]
       curr_ids = tf.boolean_mask(inputs, mask) - low
 
-      # [num_valid, hidden_size]
+      # [num_valid_entries, hidden_size]
       curr_embeddings = tf.matmul(
           tf.gather(weights[i], curr_ids), weight_projs[i])
 
@@ -287,23 +302,25 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       # [batch_size, seq_len, hidden_size]
       embeddings.append(tf.scatter_nd(mask_idx, curr_embeddings, output_shape))
 
-    embeddings = tf.add_n(embeddings) * self._hidden_size ** 0.5
+    embeddings = tf.add_n(embeddings)
+    if self._scale_embeddings:
+        embeddings *= self._hidden_size ** 0.5
     return embeddings
 
   def _embeddings_to_softmax(self, inputs):
-    """Converts the outputs from the model (e.g. RNN, Transformer) to 
+    """Converts the outputs from the model (e.g. RNN, TransformerXL) to
     probability distributions over vocabulary tokens using adaptive softmax.
 
     Args:
-      inputs: float tensor of shape [batch_size, seq_len, hidden_size], the 
-        tensor holding input token embeddings computed from the last layer of 
+      inputs: float tensor of shape [batch_size, seq_len, hidden_size], the
+        tensor holding input token embeddings computed from the last layer of
         the model.
 
     Returns:
-      softmax: float tensor of shape [batch_size, seq_len, vocab_size], the 
-        per-token probability distribution over tokens in vocabulary. 
+      softmax: float tensor of shape [batch_size, seq_len, vocab_size], the
+        per-token probability distribution over tokens in vocabulary.
     """
-    head_weight_proj, head_weight = self.trainable_variables[:2]
+    head_weight = self.trainable_variables[1]
 
     # [batch_size, seq_len, cutoffs[0] + num_tails]
     head_logits = tf.matmul(inputs, head_weight)
@@ -312,14 +329,14 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     # [batch_size, seq_len, cutoffs[0]]
     softmax_list = [head_softmax[:, :, :self._cutoffs[0]]]
     for i in range(self._num_tails):
-      tail_weight_proj = self.trainable_variables[i*2+2]
-      tail_weight = self.trainable_variables[i*2+3]
+      tail_weight_proj = self.trainable_variables[i * 2 + 2]
+      tail_weight = self.trainable_variables[i * 2 + 3]
 
       # [batch_size, seq_len, tail_size]
       tail_logits = tf.matmul(tf.matmul(inputs, tail_weight_proj), tail_weight)
       tail_softmax = tf.nn.softmax(tail_logits)
       index = self._cutoffs[0] + i
-      softmax_list.append(tail_softmax * head_softmax[:, :, index:index+1])
+      softmax_list.append(tail_softmax * head_softmax[:, :, index : index + 1])
 
     softmax = tf.concat(softmax_list, axis=2)
     return softmax
@@ -340,35 +357,35 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
         num of token ids in `labels` that fall within in the range of token 
         indices of tail partition `i`.
     """
-    head_weight_proj, head_weight = self.trainable_variables[:2]
+    head_weight = self.trainable_variables[1]
 
     training_losses = []
     head_labels = labels
 
     # computes loss for tails
     for i in range(1, len(self._cutoffs)):
-      tail_weight_proj = self.trainable_variables[i*2]
-      tail_weight = self.trainable_variables[i*2+1]
+      tail_weight_proj = self.trainable_variables[i * 2]
+      tail_weight = self.trainable_variables[i * 2 + 1]
 
       low, high = self._cutoffs[i - 1], self._cutoffs[i]
       mask = tf.logical_and(labels >= low, labels < high)
 
-      # set the head label to `cutoffs[0] + i - 1` for tokens within
-      # tail partition `i` 
+      # update the entries in `head_labels` to `cutoffs[0] + i - 1`, i.e. the 
+      #"head class ID" for tail partition `i`
       # [batch_size, seq_len]
       head_labels = tf.where(mask, self._cutoffs[0] + i - 1, head_labels)
 
-      # [num_valid, hidden_size]
+      # [num_valid_entries, hidden_size]
       tail_inputs = tf.boolean_mask(inputs, mask)
 
-      # [num_valid, tail_size]
+      # [num_valid_entries, tail_size]
       tail_logits = tf.matmul(tf.matmul(
           tail_inputs, tail_weight_proj), tail_weight)
 
-      # [num_valid]
+      # [num_valid_entries]
       tail_labels = tf.boolean_mask(labels - self._cutoffs[i - 1], mask)
 
-      # [num_valid]
+      # [num_valid_entries]
       tail_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
           labels=tail_labels, logits=tail_logits)
       training_losses.append(tail_loss)

@@ -9,6 +9,7 @@ import unicodedata
 
 import tensorflow as tf
 
+
 _ALPHANUMERIC_CHAR_SET = set(
     chr(i) for i in range(sys.maxunicode)
     if unicodedata.category(chr(i)).startswith('L') or
@@ -36,7 +37,7 @@ class SubTokenizer(object):
     subtoken_ids = subtokenizer.encode(text) 
     original_text = subtokenizer.decode(subtoken_ids)
     # `text` and `original_text` should be identical
- """
+  """
   def __init__(self, subtoken_list, alphabet, check_alphabet=True):
     """Constructor.
 
@@ -85,8 +86,6 @@ class SubTokenizer(object):
     2. For each token string, split it into a list of subtoken strings.
     3. Translate subtoken strings into subtoken ids.
 
-    Example:
-
     Args:
       string: a string scalar, the raw text to be encoded.
       add_eos: bool scalar, whether or not to add End-Of-Sequence `EOS` token.
@@ -113,17 +112,14 @@ class SubTokenizer(object):
       subtoken_ids.append(EOS_ID)
     return subtoken_ids
 
-
   def decode(self, subtoken_ids):
     """Decode a list of subtoken ids by
 
     1. Translate subtoken ids back to subtoken strings.
-    2. Concatenate subtoken strings into a single string (separator is '').
+    2. Concatenate subtoken strings into a single string (with separator '').
     3. Split the single string by separator '_', which gives us the escaped 
         tokens.
-    4. Unescape the escaped tokens, and join then with separator ' ' or ''.
-
-    Example:
+    4. Unescape the escaped tokens, and join them with separator ' ' or ''.
 
     Args:
       subtoken_ids: a list of ints, the subtoken ids
@@ -438,7 +434,6 @@ def _generate_subtokens(token_counts, alphabet, min_count, num_iterations=4):
         subtoken_buckets.append(set()) 
       subtoken_buckets[len(subtoken)].add(subtoken)
     max_subtoken_length = len(subtoken_buckets) - 1
-
 
     for subtoken_len in range(max_subtoken_length, 0, -1):
       for subtoken in subtoken_buckets[subtoken_len]:
