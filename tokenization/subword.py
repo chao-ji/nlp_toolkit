@@ -20,7 +20,7 @@ _ESCAPE_CHARS = set(u"\\_u;0123456789")
 SOS_ID = 0
 # vocab index of END-OF-SEQUENCE token
 EOS_ID = 1
-RESERVED_TOKENS = ['<pad>', '<EOS>']
+RESERVED_TOKENS = ['<SOS>', '<EOS>']
 _UNDEFINED_UNICODE = '\u3013'
 _OOA_CHAR_REGEX = r'\\([0-9]+);'
 
@@ -136,8 +136,7 @@ class SubTokenizer(object):
 
     tokens = []
     for token in escaped_tokens:
-      if token:
-        tokens.append(_unescape_token(token))
+      tokens.append(_unescape_token(token))
     token_is_alnum = [token[0] in _ALPHANUMERIC_CHAR_SET for token in tokens] 
 
     string = []
@@ -181,7 +180,7 @@ def create_subtokenizer_from_raw_text_files(filenames,
                                             target_vocab_size, 
                                             threshold, 
                                             min_count=None, 
-                                            file_byte_limit=1e6):
+                                            file_char_limit=1e6):
   """Builds a vocabulary of subword tokens from raw text files and creates a 
   subtokenizer.
 
@@ -200,7 +199,7 @@ def create_subtokenizer_from_raw_text_files(filenames,
       Ignored if `min_count` is not None.
     min_count: int scalar, the minimum count required for a subtoken to be 
       included in the vocabulary. 
-    file_byte_limit: int scalar, the max num of bytes worth of text to be 
+    file_char_limit: int scalar, the max num of chars worth of text to be 
       sampled from each raw text file to build the vocabulary.
 
   Returns:
@@ -208,27 +207,26 @@ def create_subtokenizer_from_raw_text_files(filenames,
   """ 
   # Build a dict mapping tokens (e.g. words in space-separated languages like 
   # English, or sentences in languages like Chinese, Japanese) to token counts. 
-  token_counts = collections.defaultdict(int)
+  token_counts = collections.Counter()
 
   for filepath in filenames:
-    with tf.io.gfile.GFile(filepath, mode='r') as reader:
-      # Sample approximately `file_byte_limit` bytes worth of text from each 
+    with tf.io.gfile.GFile(filepath, mode='r') as f:
+      # Sample approximately `file_char_limit` chars worth of text from each 
       # file. 
-      file_byte_budget = file_byte_limit
+      file_char_budget = file_char_limit
       counter = 0
-      lines_to_skip = int(reader.size() / (file_byte_budget * 1))
-      for line in reader:
+      lines_to_skip = int(f.size() / (file_char_budget * 1))
+      for line in f:
         if counter < lines_to_skip:
           counter += 1
         else:
-          if file_byte_budget < 0:
+          if file_char_budget < 0:
             break
           line = line.strip()
-          file_byte_budget -= len(line)
+          file_char_budget -= len(line)
           counter = 0
 
-          for token in _split_string_to_tokens(line):
-            token_counts[token] += 1
+          token_counts.update(_split_string_to_tokens(line))
 
   alphabet = _generate_alphabet(token_counts)
 
@@ -506,7 +504,7 @@ def _generate_alphabet(iterable):
   """Generates the alphabet (unique unicode chars) from an iterable of tokens.
 
   Note: the alphabet is augmented with chars from tokens in `RESERVED_TOKENS`
-  and chars from `_ESCAPE_CHARS`: "<pad>EOS\\_u;0123456789"
+  and chars from `_ESCAPE_CHARS`: "<SOS>EOS\\_u;0123456789"
   
   Arsg:
     iterable: an iterable (e.g. dict, list) of strings, the tokens.

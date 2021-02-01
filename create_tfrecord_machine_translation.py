@@ -19,7 +19,7 @@ flags.DEFINE_list(
     'target_filenames', None, 'Names of files storing target language '
         'sequences.')
 flags.DEFINE_float(
-    'file_byte_limit', 1e6, 'Number of bytes to read from each text file.')
+    'file_char_limit', 1e6, 'Number of bytes to read from each text file.')
 flags.DEFINE_integer(
     'target_vocab_size', 32768, 'The desired vocabulary size. Ignored if ' 
         '`min_count` is not None.')
@@ -39,28 +39,57 @@ flags.DEFINE_integer(
 flags.DEFINE_string(
     'output_dir', None, 'Path to the directory that the generated TFRecord '
         'files will be written to')
-
+flags.DEFINE_bool(
+    'use_exist_vocab', False, 'Whether to create (sub)tokenizer from existing '
+        ' vocabualry. Defaults to False.')
+flags.DEFINE_bool(
+    'add_eos', True, 'Whether to add special token EOS to the end of the list'
+        ' of token ids for each line.')
+flags.DEFINE_bool(
+    'subword', True, 'Whether to use subword tokenizer. Defaults to True.')
 
 def main(_):
   source_filenames = FLAGS.source_filenames
   target_filenames = FLAGS.target_filenames
-  file_byte_limit = FLAGS.file_byte_limit
+  file_char_limit = FLAGS.file_char_limit
   target_vocab_size = FLAGS.target_vocab_size
   threshold = FLAGS.threshold
   min_count = FLAGS.min_count
   vocab_name = FLAGS.vocab_name
-  output_dir = FLAGS.output_dir
   total_shards = FLAGS.total_shards
+  output_dir = FLAGS.output_dir
+  use_exist_vocab = FLAGS.use_exist_vocab
+  add_eos = FLAGS.add_eos
+  subword = FLAGS.subword
+
   train_files_flat = source_filenames + target_filenames
 
-  subtokenizer = tokenization.create_subtokenizer_from_raw_text_files(
-      train_files_flat, 
-      target_vocab_size, 
-      threshold, 
-      min_count=min_count, 
-      file_byte_limit=file_byte_limit)
-
-  subtokenizer.save_to_file(vocab_name)
+  if subword:
+    if use_exist_vocab:
+      print('Resotre subtokenizer from existing vocab: %s...' % vocab_name)
+      tokenizer = tokenization.restore_subtokenizer_from_vocab_files(vocab_name)
+    else:
+      print('Create fresh subtokenizer from raw text files...')
+      tokenizer = tokenization.create_subtokenizer_from_raw_text_files(
+          train_files_flat,
+          target_vocab_size,
+          threshold,
+          min_count=min_count,
+          file_char_limit=file_char_limit)
+      tokenizer.save_to_file(vocab_name)
+  else:
+    if use_exist_vocab:
+      print('Restore whole word tokenizer from existing vocab : %s...'
+          % vocab_name)
+      tokenizer = tokenization.restore_tokenizer_from_vocab_files(vocab_name)
+    else:
+      print('Create fresh whole word tokenizer from raw text files...')
+      tokenizer = tokenization.create_tokenizer_from_raw_text_files(
+          train_files_flat, 
+          target_vocab_size,
+          min_count=min_count, 
+          file_char_limit=file_char_limit)
+      tokenizer.save_to_file(vocab_name)
 
   source_files = [tf.io.gfile.GFile(fn) for fn in source_filenames]
   target_files = [tf.io.gfile.GFile(fn) for fn in target_filenames]
@@ -82,8 +111,8 @@ def main(_):
       print('Number of examples saved: %d.' % counter)
 
     example = dict_to_example(
-        {'source': subtokenizer.encode(source_line, add_eos=True),
-         'target': subtokenizer.encode(target_line, add_eos=True)})
+        {'source': tokenizer.encode(source_line, add_eos=add_eos),
+         'target': tokenizer.encode(target_line, add_eos=add_eos)})
     writers[shard].write(example.SerializeToString())
     shard = (shard + 1) % total_shards
 

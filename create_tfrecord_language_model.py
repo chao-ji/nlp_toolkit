@@ -47,7 +47,7 @@ flags.DEFINE_bool(
     'subword', False, 'Whether to use subword tokenizer. Defaults to False.')
 flags.DEFINE_integer(
     'min_count', 0, 'The minimum count required for a token to be included in '
-        'the vocabulary.')
+        'the vocabulary. Ignored if `subword` is True')
 flags.DEFINE_integer(
     'target_vocab_size', 32000, 'The desired vocabulary size. Ignored if '
         '`subword` is False.')
@@ -56,7 +56,7 @@ flags.DEFINE_integer(
         '`target_vocab_size` is smaller than this, the binary search '
         'terminates. Ignored if `subword` is False.')
 flags.DEFINE_float(
-    'file_byte_limit', 1e8, 'Number of bytes to read from each text file. '
+    'file_char_limit', 1e8, 'Number of chars to read from each text file. '
         'Ignored if `subword` is False.')
 flags.DEFINE_integer(
     'batch_size', 32, 'The number of sequence segments packed in a batch.')
@@ -74,7 +74,9 @@ flags.DEFINE_string(
 flags.DEFINE_bool(
     'use_exist_vocab', False, 'Whether to create (sub)tokenizer from existing '
         ' vocabualry. Defaults to False.')
-
+flags.DEFINE_bool(
+    'add_eos', True, 'Whether to add special token EOS to the end of the list'
+        ' of token ids for each line.')
 
 def main(_):
   filenames = FLAGS.filenames
@@ -82,18 +84,19 @@ def main(_):
   min_count = FLAGS.min_count
   target_vocab_size = FLAGS.target_vocab_size
   threshold = FLAGS.threshold
-  file_byte_limit = FLAGS.file_byte_limit
+  file_char_limit = FLAGS.file_char_limit
   batch_size = FLAGS.batch_size
   seq_len = FLAGS.seq_len
   vocab_name = FLAGS.vocab_name
   output_dir = FLAGS.output_dir
   output_filename = FLAGS.output_filename
   use_exist_vocab = FLAGS.use_exist_vocab
+  add_eos = FLAGS.add_eos
 
   with tf.io.gfile.GFile(os.path.join(
-      output_dir, output_filename + '.json'), 'w') as f: 
-    json.dump({'seq_len': seq_len, 
-               'batch_size': batch_size, 
+      output_dir, output_filename + '.json'), 'w') as f:
+    json.dump({'seq_len': seq_len,
+               'batch_size': batch_size,
                'subword': subword}, f)
 
   if subword:
@@ -106,7 +109,7 @@ def main(_):
           filenames,
           target_vocab_size,
           threshold,
-          file_byte_limit=file_byte_limit)
+          file_char_limit=file_char_limit)
       tokenizer.save_to_file(vocab_name)
   else:
     if use_exist_vocab:
@@ -116,14 +119,17 @@ def main(_):
     else:
       print('Create fresh whole word tokenizer from raw text files...')
       tokenizer = tokenization.create_tokenizer_from_raw_text_files(
-          filenames, min_count=min_count)
+          filenames, 
+          target_vocab_size=target_vocab_size, 
+          min_count=min_count, 
+          file_char_limit=file_char_limit)
       tokenizer.save_to_file(vocab_name)
 
-  data = [] 
+  data = []
   for filename in filenames:
-    with open(filename) as f:
+    with tf.io.gfile.GFile(filename, 'r') as f:
       for line in f:
-        data.extend(tokenizer.encode(line.strip(), add_eos=True)) 
+        data.extend(tokenizer.encode(line.strip(), add_eos=add_eos))
   data = np.array(data)
 
   writer = tf.io.TFRecordWriter(
@@ -136,8 +142,8 @@ def main(_):
   for i in range(0, data.shape[1] - 1, seq_len):
     cur_seq_len = min(data.shape[1] - 1 - i, seq_len)
     for idx in range(batch_size):
-      inputs = data[idx, i:i + cur_seq_len]
-      labels = data[idx, i + 1: i + cur_seq_len + 1]
+      inputs = data[idx, i: i + cur_seq_len]
+      labels = data[idx, i + 1: i + 1 + cur_seq_len]
 
       example = dict_to_example({'inputs': inputs, 'labels': labels})
       writer.write(example.SerializeToString())
