@@ -136,7 +136,8 @@ class SubTokenizer(object):
 
     tokens = []
     for token in escaped_tokens:
-      tokens.append(_unescape_token(token))
+      if token:
+        tokens.append(_unescape_token(token))
     token_is_alnum = [token[0] in _ALPHANUMERIC_CHAR_SET for token in tokens] 
 
     string = []

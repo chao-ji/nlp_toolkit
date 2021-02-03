@@ -105,7 +105,7 @@ class BaseSequenceTransductionDatasetBuilder(object):
         shuffle=self._shuffle,
         num_parallel_calls=self._num_parallel_calls,
         filter_fn=filter_fn,
-        buffer_size_per_file=None,
+        buffer_size_per_file=_READ_RECORD_BUFFER,
         random_seed=self._random_seed)
 
     dataset = self._batch_examples(dataset)
