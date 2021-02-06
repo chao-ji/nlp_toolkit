@@ -1,4 +1,10 @@
-"""Convert parallel corpus (raw text files) into TFRecord files."""
+"""Convert parallel corpus (raw text files) into TFRecord files for training 
+machine translation models. 
+
+The parallel corpus should be text files (of unicode characters) s1.txt, t1.txt,
+s2.txt, t2.txt, ... where s{i}.txt and t{i}.txt should have the same number of 
+lines.
+"""
 import itertools
 import os
 
@@ -19,7 +25,7 @@ flags.DEFINE_list(
     'target_filenames', None, 'Names of files storing target language '
         'sequences.')
 flags.DEFINE_float(
-    'file_char_limit', 1e6, 'Number of bytes to read from each text file.')
+    'file_char_limit', 1e6, 'Number of chars to read from each text file.')
 flags.DEFINE_integer(
     'target_vocab_size', 32768, 'The desired vocabulary size. Ignored if ' 
         '`min_count` is not None.')
@@ -32,7 +38,7 @@ flags.DEFINE_integer(
         'included in the vocabulary.')
 flags.DEFINE_string(
     'vocab_name', 'vocab', 'Vocabulary will be stored in two files: '
-        '"vocab.subtokens", "vocab.alphabet".')
+        '"vocab.subtokens", "vocab.alphabet"')
 flags.DEFINE_integer(
     'total_shards', 100, 'Total number of shards of the dataset (number of the '
         'generated TFRecord files)')
@@ -40,13 +46,11 @@ flags.DEFINE_string(
     'output_dir', None, 'Path to the directory that the generated TFRecord '
         'files will be written to')
 flags.DEFINE_bool(
-    'use_exist_vocab', False, 'Whether to create (sub)tokenizer from existing '
+    'use_exist_vocab', False, 'Whether to create subtokenizer from existing '
         ' vocabualry. Defaults to False.')
 flags.DEFINE_bool(
     'add_eos', True, 'Whether to add special token EOS to the end of the list'
         ' of token ids for each line.')
-flags.DEFINE_bool(
-    'subword', True, 'Whether to use subword tokenizer. Defaults to True.')
 
 def main(_):
   source_filenames = FLAGS.source_filenames
@@ -60,36 +64,22 @@ def main(_):
   output_dir = FLAGS.output_dir
   use_exist_vocab = FLAGS.use_exist_vocab
   add_eos = FLAGS.add_eos
-  subword = FLAGS.subword
 
   train_files_flat = source_filenames + target_filenames
 
-  if subword:
-    if use_exist_vocab:
-      print('Resotre subtokenizer from existing vocab: %s...' % vocab_name)
-      tokenizer = tokenization.restore_subtokenizer_from_vocab_files(vocab_name)
-    else:
-      print('Create fresh subtokenizer from raw text files...')
-      tokenizer = tokenization.create_subtokenizer_from_raw_text_files(
-          train_files_flat,
-          target_vocab_size,
-          threshold,
-          min_count=min_count,
-          file_char_limit=file_char_limit)
-      tokenizer.save_to_file(vocab_name)
+  if use_exist_vocab:
+    print('Resotre subtokenizer from existing vocab: %s...' % vocab_name)
+    subtokenizer = tokenization.restore_subtokenizer_from_vocab_files(
+        vocab_name)
   else:
-    if use_exist_vocab:
-      print('Restore whole word tokenizer from existing vocab : %s...'
-          % vocab_name)
-      tokenizer = tokenization.restore_tokenizer_from_vocab_files(vocab_name)
-    else:
-      print('Create fresh whole word tokenizer from raw text files...')
-      tokenizer = tokenization.create_tokenizer_from_raw_text_files(
-          train_files_flat, 
-          target_vocab_size,
-          min_count=min_count, 
-          file_char_limit=file_char_limit)
-      tokenizer.save_to_file(vocab_name)
+    print('Create fresh subtokenizer from raw text files...')
+    subtokenizer = tokenization.create_subtokenizer_from_raw_text_files(
+        train_files_flat,
+        target_vocab_size,
+        threshold,
+        min_count=min_count,
+        file_char_limit=file_char_limit)
+    subtokenizer.save_to_file(vocab_name)
 
   source_files = [tf.io.gfile.GFile(fn) for fn in source_filenames]
   target_files = [tf.io.gfile.GFile(fn) for fn in target_filenames]
@@ -111,8 +101,8 @@ def main(_):
       print('Number of examples saved: %d.' % counter)
 
     example = dict_to_example(
-        {'source': tokenizer.encode(source_line, add_eos=add_eos),
-         'target': tokenizer.encode(target_line, add_eos=add_eos)})
+        {'source': subtokenizer.encode(source_line, add_eos=add_eos),
+         'target': subtokenizer.encode(target_line, add_eos=add_eos)})
     writers[shard].write(example.SerializeToString())
     shard = (shard + 1) % total_shards
 
