@@ -169,7 +169,7 @@ def restore_subtokenizer_from_vocab_files(filename):
         subtoken_list.append(subtoken)
   with tf.io.gfile.GFile(filename + '.alphabet', mode='r') as f:
     for line in f:
-      char = line.strip() # drop trailing '\n' 
+      char = line[:-1] # drop trailing '\n' 
       alphabet.add(char)
 
   subtoken_list = reserved_tokens + subtoken_list
