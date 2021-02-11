@@ -394,6 +394,10 @@ def _generate_subtokens(token_counts, alphabet, min_count, num_iterations=4):
   """Generates subtokens by breaking tokens into subtrings, and moving frequent
   ones into the final subtoken list.
 
+  Intuitively, we start with a set of subtokens consisting of all characters
+  from the alphabet, and we update the set of subtokens, favoring longer and
+  more frequent subtokens, by merging existing subtokens into longer ones.
+
   Args:
     token_counts: a dict, mapping token strings to their counts.
     alphabet: a set, storing the unique unicode chars from tokens sampled from
@@ -419,11 +423,17 @@ def _generate_subtokens(token_counts, alphabet, min_count, num_iterations=4):
     for token, count in token_counts.items():
       token = _escape_token(token, alphabet)
 
-      # greedily splits `token` into subtokens, giving priority to longer ones
+      # greedily splits `token` into `subtokens`, i.e., s{1}, s{2}, ..., s{n}
+      # according to the current set of subtokens, i.e. `subtoken_dict`. Note
+      # that s{1} + s{2} + ... + s{n} == `token`
       subtokens = _split_token_to_subtokens(
           token, subtoken_dict, max_subtoken_length)
 
-      # adds additional subtokens:
+      # for the string made by concatenating consecutive subtokens in
+      # s{1}, s{2}, ..., s{n}, i.e., s{i} + s{i+1} + ... + s{i+k-1}, add all
+      # their prefixes (including themselves) to the updated set of subtokens,
+      # i.e., `subtoken_counts`, with counts being the count of their parent
+      #string `token`
       start = 0
       for subtoken in subtokens: 
         for end in range(start + 1, len(token) + 1):
@@ -433,7 +443,7 @@ def _generate_subtokens(token_counts, alphabet, min_count, num_iterations=4):
 
     subtoken_candidates = []
 
-    # sort subtokens into buckets according to length
+    # partition the subtokens in `subtoken_counts` into buckets by their length
     # `subtoken_buckets[l]` stores the set of subtokens of length `l`
     subtoken_buckets = []
     for subtoken, count in subtoken_counts.items():
@@ -444,9 +454,15 @@ def _generate_subtokens(token_counts, alphabet, min_count, num_iterations=4):
       subtoken_buckets[len(subtoken)].add(subtoken)
     max_subtoken_length = len(subtoken_buckets) - 1
 
+    # go through the updated set of subtokens in reverse order of length, and
+    # add them to `subtoken_candidates`, while at the same time also remove
+    # their prefixes from `subtoken_counts`
     for subtoken_len in range(max_subtoken_length, 0, -1):
       for subtoken in subtoken_buckets[subtoken_len]:
         count = subtoken_counts[subtoken]
+
+        # some subtokens' counts may have been decreased in the inner loop, so
+        # we need to check their counts >= `min_count` again
         if count < min_count:
           continue
 
@@ -455,12 +471,12 @@ def _generate_subtokens(token_counts, alphabet, min_count, num_iterations=4):
         if subtoken not in alphabet and subtoken not in reserved_tokens:
           subtoken_candidates.append((count, subtoken))
 
-        # if a subtoken is alread added to the candidate list, we remove all its
-        # prefixes
+        # remove `subtoken`'s prefixes from `subtoken_counts`
         for end in range(1, subtoken_len):
           subtoken_counts[subtoken[:end]] -= count
 
     subtoken_candidates.extend((subtoken_counts[a], a) for a in alphabet) 
+    # sort the subtoken candidates in reverse order of length
     subtoken_list = [t for _, t in sorted(subtoken_candidates, reverse=True)]
     subtoken_list = reserved_tokens + subtoken_list
 
