@@ -49,7 +49,7 @@ flags.DEFINE_integer(
     'min_count', 0, 'The minimum count required for a token to be included in '
         'the vocabulary. Ignored if `subword` is True')
 flags.DEFINE_integer(
-    'target_vocab_size', 32000, 'The desired vocabulary size. Ignored if '
+    'target_vocab_size', None, 'The desired vocabulary size. Ignored if '
         '`subword` is False.')
 flags.DEFINE_integer(
     'threshold', 320, 'If the difference between actual vocab size and '

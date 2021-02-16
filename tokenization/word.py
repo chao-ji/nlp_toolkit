@@ -120,7 +120,7 @@ def create_tokenizer_from_raw_text_files(filenames,
 
   If `target_vocab_size` is not None, it will be used to truncate the vocabulary 
   to the most frequent `target_vocab_size` tokens. Otherwise, the vocabulary 
-  will be un-truncated.
+  will be left un-truncated.
 
   Args:
     filenames: a list of strings, names of raw text files.
