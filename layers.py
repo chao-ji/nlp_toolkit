@@ -179,7 +179,7 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     self._hidden_size = hidden_size
     self._cutoffs = cutoffs
     self._project_factor = project_factor
-    self._kernel_initializer = kernel_initializer,
+    self._kernel_initializer = kernel_initializer
     self._scale_embeddings = scale_embeddings
 
     self._num_tails = len(self._cutoffs) - 1
