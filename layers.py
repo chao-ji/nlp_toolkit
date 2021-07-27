@@ -44,6 +44,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
                         mean=0., stddev=self._hidden_size ** -0.5),
                     dtype='float32',
                     trainable=True)
+    super(EmbeddingLayer, self).build(inputs_shape)
 
   def call(self, inputs, mode):
     """Either converts token ids to embeddings, or embeddings to logits.
