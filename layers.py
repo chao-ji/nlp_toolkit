@@ -491,22 +491,29 @@ class FeedForwardNetwork(tf.keras.layers.Layer):
   """The Projection layer that consists of a tandem of two dense layers (an
   intermediate layer and an output layer).
   """
-  def __init__(self, hidden_size, filter_size, dropout_rate):
+  def __init__(self,
+               hidden_size,
+               filter_size,
+               dropout_rate,
+               filter_activation=tf.nn.relu):
     """Constructor.
 
     Args:
       hidden_size: int scalar, the hidden size of continuous representation, 
         which is also the depth of the output dense layer.
       filter_size: int scalar, the depth of the intermediate dense layer. 
-      dropout_rate: float scalar, dropout rate for the Dropout layers. 
+      dropout_rate: float scalar, dropout rate for the Dropout layers.
+      filter_activation: callable or string, activation function of the filter
+        dense layer. Decaults to ReLU. 
     """
     super(FeedForwardNetwork, self).__init__()
     self._hidden_size = hidden_size
     self._filter_size = filter_size
     self._dropout_rate = dropout_rate
+    self._filter_activation = filter_activation
 
     self._dense_layer_filter = tf.keras.layers.Dense(
-        filter_size, use_bias=True, activation=tf.nn.relu)
+        filter_size, use_bias=True, activation=filter_activation)
     self._dense_layer_output = tf.keras.layers.Dense(hidden_size, use_bias=True)
     self._dropout_layer = tf.keras.layers.Dropout(dropout_rate)
 
