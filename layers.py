@@ -1,6 +1,123 @@
 """Functions that add layers/operations to TensorFlow's computational graph."""
 import tensorflow as tf
 
+from .beam_search import NEG_INF
+
+
+class Attention(tf.keras.layers.Layer):
+  """Multi-headed attention layer.
+
+  Given a batch of continuously represented query sequences (tensor of shape [
+  batch_size, q_seq_len, hidden_size]) and reference sequences (tensor of shape
+  [batch_size, r_seq_len, hidden_size]), this layer computes a new
+  representation of the query sequences by making them selectively attend to
+  different tokens in reference sequences.
+
+  When the query and reference sequence are the same, this layer ends up being
+  "Self Attention" -- the query sequence attends to itself.
+  """
+  def __init__(self, hidden_size, num_heads, dropout_rate):
+    """Constructor.
+
+    Args:
+      hidden_size: int scalar, the hidden size of continuous representation.
+      num_heads: int scalar, num of attention heads.
+      dropout_rate: float scalar, dropout rate for the Dropout layers.
+    """
+    super(Attention, self).__init__()
+    self._hidden_size = hidden_size
+    self._num_heads = num_heads
+    self._dropout_rate = dropout_rate
+    self._size_per_head = hidden_size // num_heads
+
+    self._dense_layer_query = Projection(
+        num_heads, self._size_per_head, mode='split')
+    self._dense_layer_key = Projection(
+        num_heads, self._size_per_head, mode='split')
+    self._dense_layer_value = Projection(
+        num_heads, self._size_per_head, mode='split')
+    self._dense_layer_output = Projection(
+        num_heads, self._size_per_head, mode='merge')
+    self._dropout_layer = tf.keras.layers.Dropout(dropout_rate)
+
+  def call(self, query_seqs, reference_seqs, token_mask, training, cache=None):
+    """Computes new representation of query sequences.
+
+    Args:
+      query_seqs: float tensor of shape [batch_size, q_seq_len, hidden_size],
+        query sequences.
+      reference_seqs: float tensor of shape [batch_size, r_seq_len, hidden_size]
+        , reference sequences.
+      token_mask: float tensor of shape [batch_size, num_heads, q_seq_len,
+        r_seq_len], populated with either 0 (for tokens to keep) or 1 (for
+        tokens to be masked).
+      training: bool scalar, True if in training mode.
+      cache: (Optional) dict with entries
+        'k': tensor of shape [batch_size * beam_width, seq_len, num_heads,
+          size_per_head],
+        'v': tensor of shape [batch_size * beam_width, seq_len, num_heads,
+          size_per_head],
+        'tgt_tgt_attention': tensor of shape [batch_size * beam_width,
+          num_heads, tgt_seq_len, tgt_seq_len],
+        'tgt_src_attention': tensor of shape [batch_size * beam_width,
+          num_heads, tgt_seq_len, src_seq_len].
+        Must be provided in inference mode when called within decoder layers.
+
+    Returns:
+      outputs: float tensor of shape [batch_size, q_seq_len, hidden_size], the
+        new representation of `query_seqs`.
+    """
+    self_attention = True if id(query_seqs) == id(reference_seqs) else False
+
+    # [batch_size, q_seq_len, num_heads, size_per_head]
+    query = self._dense_layer_query(query_seqs)
+    query *= self._size_per_head ** -0.5
+
+    # [batch_size, r_seq_len, num_heads, size_per_head]
+    key = self._dense_layer_key(reference_seqs)
+
+    # [batch_size, r_seq_len, num_heads, size_per_head]
+    value = self._dense_layer_value(reference_seqs)
+
+    if cache is not None and self_attention:
+      # concatenate along the `seq_len` dimension
+      cache['k'] = key = tf.concat([cache['k'], key], axis=1)
+      cache['v'] = value = tf.concat([cache['v'], value], axis=1)
+
+    # [batch_size, num_heads, q_seq_len, r_seq_len]
+    attention_weights = tf.einsum('NQHS,NRHS->NHQR', query, key)
+
+    # [batch_size, num_heads, q_seq_len, r_seq_len]
+    attention_weights += token_mask * NEG_INF
+
+    # [batch_size, num_heads, q_seq_len, r_seq_len]
+    attention_weights = tf.nn.softmax(attention_weights, axis=3)
+    attention_weights = self._dropout_layer(
+        attention_weights, training=training)
+
+    # save attention weights of encoder layers in inference mode
+    if not training and cache is None and self_attention:
+      setattr(self, '_attention_weights', attention_weights)
+
+    # save attention weights for visualization in inference mode
+    if cache is not None:
+      if self_attention:
+        # [batch_size, num_heads, tgt_seq_len, tgt_seq_len]
+        cache['tgt_tgt_attention'] = tf.concat([tf.pad(
+            cache['tgt_tgt_attention'], [[0, 0], [0, 0], [0, 0], [0, 1]]),
+            attention_weights], axis=2)
+      else:
+        # [batch_size, num_heads, tgt_src_len, src_seq_len]
+        cache['tgt_src_attention'] = tf.concat([
+            cache['tgt_src_attention'], attention_weights], axis=2)
+
+    # [batch_size, q_seq_len, num_heads, size_per_head]
+    outputs = tf.einsum('NHQR,NRHS->NQHS', attention_weights, value)
+
+    # [batch_size, q_seq_len, hidden_size]
+    outputs = self._dense_layer_output(outputs)
+    return outputs
+
 
 class EmbeddingLayer(tf.keras.layers.Layer):
   """The customized layer that operates in Embedding mode or Logits mode.
@@ -534,61 +651,3 @@ class FeedForwardNetwork(tf.keras.layers.Layer):
     outputs = self._dropout_layer(outputs, training=training)
     outputs = self._dense_layer_output(outputs)
     return outputs
-
-
-def compute_loss(labels, logits, smoothing, vocab_size, padding_value=0):
-  """Computes average (per-token) cross entropy loss.
-
-  1. Applies label smoothing -- all entries in the groundtruth label tensor  
-     get non-zero probability mass.
-  2. Computes per token loss of shape [batch_size, tgt_seq_len], where padded
-     positions are masked, and then the sum of per token loss is normalized by
-     the total number of non-padding entries.
-
-  Args:
-    labels: int tensor of shape [batch_size, tgt_seq_len], the groundtruth
-      token ids.
-    logits: float tensor of shape [batch_size, tgt_seq_len, vocab_size], the
-      predicted logits of tokens over the vocabulary.
-    smoothing: float scalar, the amount of label smoothing applied to the
-      one-hot class labels. 
-    vocab_size: int scalar, num of tokens (including SOS and EOS) in the 
-      vocabulary.
-    padding_value: int scalar, the vocabulary index of the PAD token. 
-
-  Returns:
-    loss: float scalar tensor, the per-token cross entropy
-  """
-  # effective_vocab = vocab - {SOS_ID}
-  effective_vocab_size = vocab_size - 1
-
-  # prob mass allocated to the token that should've been predicted 
-  on_value = 1.0 - smoothing
-  # prob mass allocated to all other tokens
-  off_value = smoothing / (effective_vocab_size - 1)
-
-  # [batch_size, tgt_seq_len, vocab_size] 
-  labels_one_hot = tf.one_hot(
-      labels,
-      depth=vocab_size,
-      on_value=on_value,
-      off_value=off_value)
-
-  # compute cross entropy over all tokens in vocabulary but SOS_ID (i.e. 0)
-  # because SOS_ID should never appear in the decoded sequence
-  # [batch_size, tgt_seq_len]
-  cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-      labels=labels_one_hot[:, :, 1:], logits=logits[:, :, 1:])
-
-  # this is the entropy when the softmax'ed logits == groundtruth labels
-  # so it should be deducted from `cross_entropy` to make sure the minimum 
-  # possible cross entropy == 0
-  normalizing_constant = -(on_value * tf.math.log(on_value) +
-      (effective_vocab_size - 1) * off_value * tf.math.log(off_value + 1e-20))
-  cross_entropy -= normalizing_constant
-
-  # mask out predictions where the labels == `padding_value`  
-  weights = tf.cast(tf.not_equal(labels, padding_value), 'float32')
-  cross_entropy *= weights
-  loss = tf.reduce_sum(cross_entropy) / tf.reduce_sum(weights)
-  return loss
