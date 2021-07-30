@@ -1,7 +1,10 @@
 """Functions that add layers/operations to TensorFlow's computational graph."""
+import math
+
 import tensorflow as tf
 
 from .beam_search import NEG_INF
+from .utils import rel_shift
 
 
 class Attention(tf.keras.layers.Layer):
@@ -116,6 +119,157 @@ class Attention(tf.keras.layers.Layer):
 
     # [batch_size, q_seq_len, hidden_size]
     outputs = self._dense_layer_output(outputs)
+    return outputs
+
+
+class RelativeAttention(Attention):
+  def __init__(self,
+               hidden_size,
+               num_heads,
+               dropout_rate,
+               two_stream=False,
+               for_xlnet=False):
+    super(RelativeAttention, self).__init__(
+        hidden_size, num_heads, dropout_rate)
+    self._dense_layer_key_position = Projection(
+        num_heads, self._size_per_head, mode='split')
+    self._two_stream = two_stream
+    self._for_xlnet = for_xlnet
+
+  def call(self,
+           content_stream,
+           position_encoding,
+           content_mask,
+           content_bias,
+           position_bias,
+           context=None,
+           mems=None,
+           query_stream=None,
+           query_mask=None,
+           target_mapping=None,
+           segment_encoding=None,
+           segment_matrix=None,
+           segment_bias=None,
+           training=False):
+    if self._two_stream: #self._for_xlnet:
+      context = content_stream if mems is None else tf.concat(
+          [mems, content_stream], 1)
+
+      # [batch_size, m_seq_len + q_seq_len, num_heads, size_per_head]
+      key_content = self._dense_layer_key(context)
+      # [batch_size, m_seq_len + q_seq_len, num_heads, size_per_head]
+      value = self._dense_layer_value(context)
+      # [batch_size, m_seq_len + 2 * seq_len, num_heads, size_per_head]
+      key_position = self._dense_layer_key_position(position_encoding)
+
+      kwargs = {'key_content': key_content,
+                'value': value,
+                'key_position': key_position,
+                'segment_encoding': segment_encoding,
+                'segment_matrix': segment_matrix,
+                'content_bias': content_bias,
+                'position_bias': position_bias,
+                'segment_bias': segment_bias,
+                'training': training}
+
+      # [batch_size, q_seq_len, num_heads, size_per_head]
+      query = self._dense_layer_query(content_stream)
+      # [batch_size, q_seq_len, num_heads, size_per_head]
+      content_outputs = self._compute_attention(
+          query, content_mask, **kwargs)
+      # [batch_size, q_seq_len, hidden_size]
+      content_outputs = self._dense_layer_output(content_outputs)
+
+      # [batch_size, num_targets, num_heads, size_per_head]
+      query = self._dense_layer_query(query_stream)
+      # [batch_size, q_seq_len, num_heads, size_per_head]
+      query = tf.einsum('NPHS,NPQ->NQHS', query, target_mapping)
+      # [batch_size, q_seq_len, num_heads, size_per_head]
+      query_outputs = self._compute_attention(
+          query, query_mask, **kwargs)
+      # [batch_size, num_targets, num_heads, size_per_head]
+      query_outputs = tf.einsum('NQHS,NPQ->NPHS', query_outputs, target_mapping)
+      # [batch_size, num_targets, hidden_size]
+      query_outputs = self._dense_layer_output(query_outputs)
+
+      return content_outputs, query_outputs
+    else:
+      # [batch_size, q_seq_len, num_heads, size_per_head] 
+      query = self._dense_layer_query(content_stream)
+
+      # [batch_size, c_seq_len, num_heads, size_per_head]
+      key_content = self._dense_layer_key(context)
+
+      # [batch_size, c_seq_len, num_heads, size_per_head]
+      key_position = self._dense_layer_key_position(position_encoding)
+
+      # [batch_size, c_seq_len, num_heads, size_per_head] 
+      value = self._dense_layer_value(context)
+
+      outputs = self._compute_attention(query=query,
+                                        attention_mask=content_mask,
+                                        key_content=key_content,
+                                        value=value,
+                                        key_position=key_position,
+                                        content_bias=content_bias,
+                                        position_bias=position_bias,
+                                        segment_encoding=segment_encoding,
+                                        segment_matrix=segment_matrix,
+                                        segment_bias=segment_bias,
+                                        training=training)
+
+      # [batch_size, q_seq_len, hidden_size]
+      outputs = self._dense_layer_output(outputs)
+      return outputs
+
+  def _compute_attention(self,
+                         query,
+                         attention_mask,
+                         key_content,
+                         value,
+                         key_position,
+                         content_bias,
+                         position_bias,
+                         segment_encoding=None,
+                         segment_matrix=None,
+                         segment_bias=None,
+                         training=False):
+    content_attention = tf.einsum('NQHS,NRHS->NHQR',
+                                  query + content_bias,
+                                  key_content)
+
+    position_attention = tf.einsum('NQHS,NRHS->NHQR',
+                                   query + position_bias,
+                                   key_position)
+    position_attention = rel_shift(position_attention)
+    attention_shape = tf.shape(content_attention)
+
+    if self._for_xlnet:
+      position_attention = position_attention[
+          ..., 1:1 + attention_shape[3]]
+
+    attention_weights = content_attention + position_attention
+    if segment_encoding is not None:
+      # [batch_size, num_heads, q_seq_len, 2]
+      segment_attention = tf.einsum('NQHS,GHS->NHQG',
+                                    query + segment_bias,
+                                    segment_encoding)
+
+      # [batch_size, num_heads, q_seq_len, m_seq_len + q_seq_len]
+      segment_attention = tf.where(
+          tf.broadcast_to(segment_matrix[:, tf.newaxis], attention_shape),
+          tf.broadcast_to(segment_attention[..., 1:], attention_shape),
+          tf.broadcast_to(segment_attention[..., :1], attention_shape))
+      attention_weights += segment_attention
+
+    attention_weights = tf.multiply(
+        attention_weights, 1.0 / math.sqrt(float(self._size_per_head)))
+    attention_weights += attention_mask * NEG_INF
+    attention_weights = tf.nn.softmax(attention_weights, axis=3)
+    attention_weights = self._dropout_layer(
+        attention_weights, training=training)
+
+    outputs = tf.einsum('NHQR,NRHS->NQHS', attention_weights, value)
     return outputs
 
 
