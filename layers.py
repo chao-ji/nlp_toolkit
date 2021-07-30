@@ -142,8 +142,7 @@ class RelativeAttention(Attention):
            content_mask,
            content_bias,
            position_bias,
-           context=None,
-           mems=None,
+           context,
            query_stream=None,
            query_mask=None,
            target_mapping=None,
@@ -151,9 +150,7 @@ class RelativeAttention(Attention):
            segment_matrix=None,
            segment_bias=None,
            training=False):
-    if self._two_stream: #self._for_xlnet:
-      context = content_stream if mems is None else tf.concat(
-          [mems, content_stream], 1)
+    if self._two_stream:
 
       # [batch_size, m_seq_len + q_seq_len, num_heads, size_per_head]
       key_content = self._dense_layer_key(context)
