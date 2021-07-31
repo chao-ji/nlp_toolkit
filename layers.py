@@ -121,11 +121,7 @@ class RelativeAttention(Attention):
   single-stream input as in TransformerXL / fine-tuning XLNet, or two-stream
   input as in pre-training XLNet.
   """
-  def __init__(self,
-               hidden_size,
-               num_heads,
-               dropout_rate,
-               for_xlnet=False):
+  def __init__(self, hidden_size, num_heads, dropout_rate, for_xlnet=False):
     """Constructor.
 
     Args:
