@@ -14,7 +14,7 @@ class Attention(tf.keras.layers.Layer):
   batch_size, q_seq_len, hidden_size]) and context sequences (tensor of shape
   [batch_size, c_seq_len, hidden_size]), this layer computes a new
   representation of the query sequences by making them selectively attend to
-  different tokens in context sequences.
+  tokens in the context sequences.
 
   If the query and context happen to be the same, the result ends up being
   "Self Attention" -- the query sequence attends to itself.
@@ -77,8 +77,6 @@ class Attention(tf.keras.layers.Layer):
 
     # [batch_size, c_seq_len, num_heads, size_per_head]
     k = self._dense_layer_key(context)
-
-    # [batch_size, c_seq_len, num_heads, size_per_head]
     v = self._dense_layer_value(context)
 
     if cache is not None and self_attention:
@@ -89,11 +87,7 @@ class Attention(tf.keras.layers.Layer):
     # [batch_size, num_heads, q_seq_len, c_seq_len]
     attention_weights = tf.einsum('NQHS,NRHS->NHQR', q, k)
     attention_weights *= self._size_per_head ** -0.5
-
-    # [batch_size, num_heads, q_seq_len, c_seq_len]
     attention_weights += attention_mask * NEG_INF
-
-    # [batch_size, num_heads, q_seq_len, c_seq_len]
     attention_weights = tf.nn.softmax(attention_weights, axis=3)
     attention_weights = self._dropout_layer(
         attention_weights, training=training)
@@ -131,7 +125,6 @@ class RelativeAttention(Attention):
                hidden_size,
                num_heads,
                dropout_rate,
-               two_stream=False,
                for_xlnet=False):
     """Constructor.
 
@@ -139,9 +132,6 @@ class RelativeAttention(Attention):
       hidden_size: int scalar, the hidden size of continuous representation.
       num_heads: int scalar, num of attention heads.
       dropout_rate: float scalar, dropout rate for the Dropout layers.
-      two_stream: (Optional) bool scalar, whether to process two-stream input.
-        True for XLNet in pretraining mode, False for XLNet in finetuning mode
-        or TransformerXL. Defaults to False.
       for_xlnet: (Optional) bool scalar, whether this layer is used for XLNet
         (True) or TransformerXL (False). If True, the positionwise attention
         weight matrix will be further sliced to match the size of other weight
@@ -151,16 +141,15 @@ class RelativeAttention(Attention):
         hidden_size, num_heads, dropout_rate)
     self._dense_layer_key_position = Projection(
         num_heads, self._size_per_head, mode='split')
-    self._two_stream = two_stream
     self._for_xlnet = for_xlnet
 
   def call(self,
            content_stream,
-           position_encoding,
            content_mask,
+           context,
+           position_encoding,
            content_bias,
            position_bias,
-           context,
            query_stream=None,
            query_mask=None,
            target_mapping=None,
@@ -177,7 +166,7 @@ class RelativeAttention(Attention):
       content_mask: float tensor of shape [batch_size, 1, q_seq_len, c_seq_len],
         token mask for content stream.
       context: float tensor of shape [batch_size, c_seq_len, hidden_size], the
-        context sequences. 
+        context sequences to which the query sequences will attend. 
       position_encoding: float tensor of shape [batch_size, r_seq_len,
         hidden_size], the position encoding for the context sequences.
       content_bias: float tensor of shape [num_heads, size_per_head], content
@@ -208,8 +197,8 @@ class RelativeAttention(Attention):
     """
     # [batch_size, c_seq_len, num_heads, size_per_head]
     k_content = self._dense_layer_key(context)
-    # [batch_size, c_seq_len, num_heads, size_per_head]
     v = self._dense_layer_value(context)
+
     # [batch_size, r_seq_len, num_heads, size_per_head]
     k_position = self._dense_layer_key_position(position_encoding)
 
@@ -223,35 +212,26 @@ class RelativeAttention(Attention):
               'segment_bias': segment_bias,
               'training': training}
 
-    if self._two_stream:
-      # [batch_size, q_seq_len, num_heads, size_per_head]
-      q = self._dense_layer_query(content_stream)
-      # [batch_size, q_seq_len, num_heads, size_per_head]
-      content_outputs = self._compute_attention(q, content_mask, **kwargs)
-      # [batch_size, q_seq_len, hidden_size]  
-      content_outputs = self._dense_layer_output(content_outputs)
+    # [batch_size, q_seq_len, num_heads, size_per_head]
+    q = self._dense_layer_query(content_stream)
+    content_outputs = self._compute_attention(q, content_mask, **kwargs)
+    # [batch_size, q_seq_len, hidden_size]
+    content_outputs = self._dense_layer_output(content_outputs)
 
+    if query_stream is not None:
       # [batch_size, num_targets, num_heads, size_per_head]
       q = self._dense_layer_query(query_stream)
       # [batch_size, q_seq_len, num_heads, size_per_head]
-      q = tf.einsum('NPHS,NPQ->NQHS', q, target_mapping)      
-      # [batch_size, q_seq_len, num_heads, size_per_head]
+      q = tf.einsum('NPHS,NPQ->NQHS', q, target_mapping)
       query_outputs = self._compute_attention(q, query_mask, **kwargs)
       # [batch_size, num_targets, num_heads, size_per_head]
       query_outputs = tf.einsum('NQHS,NPQ->NPHS', query_outputs, target_mapping)
       # [batch_size, num_targets, hidden_size]
       query_outputs = self._dense_layer_output(query_outputs)
 
-      outputs = content_outputs, query_outputs
+      return content_outputs, query_outputs
     else:
-      # [batch_size, q_seq_len, num_heads, size_per_head]
-      q = self._dense_layer_query(content_stream)
-      # [batch_size, q_seq_len, num_heads, size_per_head]    
-      outputs = self._compute_attention(q, content_mask, **kwargs) 
-      # [batch_size, q_seq_len, hidden_size]
-      outputs = self._dense_layer_output(outputs)
-
-    return outputs
+      return content_outputs
 
   def _compute_attention(self,
                          q,
@@ -271,14 +251,14 @@ class RelativeAttention(Attention):
       q: float tensor of shape [batch_size, q_seq_len, num_heads, size_per_head]
         , multi-headed projected query.
       k_content: float tensor of shape [batch_size, c_seq_len, num_heads,
-        size_per_head], multi-headed projected content-based key. 
+        size_per_head], multi-headed projected content-based key.
       v: float tensor of shape [batch_size, c_seq_len, num_heads, size_per_head]
         , multi-headed projected value.
       k_position: float tensor of shape [batch_size, r_seq_len, num_heads,
         size_per_head], multi-headed projected position-based key.
       attention_mask: float tensor of shape [batch_size, num_heads, q_seq_len,
         c_seq_len], populated with either 0 (for tokens to keep) or 1 (for
-        tokens to be masked). 
+        tokens to be masked).
       content_bias: float tensor of shape [num_heads, size_per_head], content
         bias.
       position_bias: float tensor of shape [num_heads, size_per_head], position
