@@ -194,7 +194,6 @@ class RelativeAttention(Attention):
     # [batch_size, c_seq_len, num_heads, size_per_head]
     k_content = self._dense_layer_key(context)
     v = self._dense_layer_value(context)
-
     # [batch_size, r_seq_len, num_heads, size_per_head]
     k_position = self._dense_layer_key_position(position_encoding)
 
@@ -246,15 +245,15 @@ class RelativeAttention(Attention):
     Args:
       q: float tensor of shape [batch_size, q_seq_len, num_heads, size_per_head]
         , multi-headed projected query.
+      attention_mask: float tensor of shape [batch_size, num_heads, q_seq_len,
+        c_seq_len], populated with either 0 (for tokens to keep) or 1 (for
+        tokens to be masked).
       k_content: float tensor of shape [batch_size, c_seq_len, num_heads,
         size_per_head], multi-headed projected content-based key.
       v: float tensor of shape [batch_size, c_seq_len, num_heads, size_per_head]
         , multi-headed projected value.
       k_position: float tensor of shape [batch_size, r_seq_len, num_heads,
         size_per_head], multi-headed projected position-based key.
-      attention_mask: float tensor of shape [batch_size, num_heads, q_seq_len,
-        c_seq_len], populated with either 0 (for tokens to keep) or 1 (for
-        tokens to be masked).
       content_bias: float tensor of shape [num_heads, size_per_head], content
         bias.
       position_bias: float tensor of shape [num_heads, size_per_head], position
@@ -809,7 +808,7 @@ class FeedForwardNetwork(tf.keras.layers.Layer):
       filter_size: int scalar, the depth of the intermediate dense layer. 
       dropout_rate: float scalar, dropout rate for the Dropout layers.
       filter_activation: callable or string, activation function of the filter
-        dense layer. Decaults to ReLU. 
+        dense layer. Defaults to ReLU. 
     """
     super(FeedForwardNetwork, self).__init__()
     self._hidden_size = hidden_size
