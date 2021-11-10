@@ -64,3 +64,53 @@ def parse_fn_sequence_classification(serialized_example):
   label = tf.sparse.to_dense(parsed['label'])
 
   return token_ids, label
+
+
+def parse_fn_xlnet_pretrain(serialized_example, seq_len=512):
+  """
+  """
+  parse_dict = {'token_ids': tf.io.FixedLenFeature([seq_len], 'int64'),
+                'segment_ids': tf.io.FixedLenFeature([seq_len], 'int64')}
+  parsed = tf.io.parse_single_example(serialized_example, parse_dict)
+  return parsed
+
+
+def parse_fn_squad(serialized_example, seq_len=512, training=False):
+  """
+  """
+  parse_dict = {
+      'token_ids': tf.io.FixedLenFeature([seq_len], 'int64'),
+      'token_mask': tf.io.FixedLenFeature([seq_len], 'float32'),
+      'segment_ids': tf.io.FixedLenFeature([seq_len], 'int64'),
+      'cls_index': tf.io.FixedLenFeature([], 'int64'),
+      'p_mask': tf.io.FixedLenFeature([seq_len], 'float32')}
+
+  if training:
+    parse_dict['start_position'] = tf.io.FixedLenFeature([], 'int64')
+    parse_dict['end_position'] = tf.io.FixedLenFeature([], 'int64')
+    parse_dict['is_impossible'] = tf.io.FixedLenFeature([], 'float32')
+
+  parsed = tf.io.parse_single_example(serialized_example, parse_dict)
+
+  for k in parsed.keys():
+    if parsed[k].dtype == tf.int64:
+      parsed[k] = tf.cast(parsed[k], 'int32')
+
+  return parsed
+
+
+def parse_fn_sequence_classification_bert(serialized_example, seq_len=512):
+  """
+  """
+  parse_dict = {
+    "token_ids": tf.io.FixedLenFeature([seq_len], tf.int64),
+    "token_mask": tf.io.FixedLenFeature([seq_len], tf.float32),
+    "segment_ids": tf.io.FixedLenFeature([seq_len], tf.int64),
+    "label_ids": tf.io.FixedLenFeature([], tf.int64),
+    "is_real_example": tf.io.FixedLenFeature([], tf.int64),
+  }
+
+  parsed = tf.io.parse_single_example(serialized_example, parse_dict)
+
+  return parsed
+

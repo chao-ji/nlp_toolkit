@@ -1,11 +1,16 @@
 """Defines dataset builders."""
 import os
+import functools
 
+import numpy as np
 import tensorflow as tf
 
 from .parse_fn import parse_fn_sequence_pair
 from .parse_fn import parse_fn_single_sequence
 from .parse_fn import parse_fn_sequence_classification
+from .parse_fn import parse_fn_xlnet_pretrain
+from .parse_fn import parse_fn_squad
+from .parse_fn import parse_fn_sequence_classification_bert
 
 
 # Buffer size for reading TFRecord files. Should be generally larger than the 
@@ -17,6 +22,9 @@ _MIN_BOUNDARY = 8
 
 # The rate by which the boundary grows for the next bucket.
 _BOUNDARY_SCALE = 1.1
+
+CLS_ID = 3
+SEP_ID = 4
 
 
 def create_and_preprocess(filenames, 
@@ -418,3 +426,283 @@ class SequenceClassifierDatasetBuilder(object):
     dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     return dataset
+
+
+def _token_span_mask(inputs, tgt_len, num_predict, min_num_tokens,
+                     max_num_tokens, cls_id, sep_id):
+  """Sample token spans as prediction targets."""
+  mask_alpha = tgt_len / num_predict
+  round_to_int = lambda x: tf.cast(tf.round(x), tf.int64)
+
+  # Sample span lengths from a zipf distribution
+  span_len_seq = np.arange(min_num_tokens, max_num_tokens + 1)
+  probs = np.array([1.0 / (i + 1) for i in span_len_seq])
+
+  probs /= np.sum(probs)
+  logits = tf.constant(np.log(probs), dtype=tf.float32)
+  span_lens = tf.random.categorical(
+      logits=logits[None],
+      num_samples=num_predict,
+      dtype=tf.int64,
+  )[0] + min_num_tokens
+
+  # Sample the ratio [0.0, 1.0) of left context lengths
+  span_lens_float = tf.cast(span_lens, tf.float32)
+  left_ratio = tf.random.uniform(shape=[num_predict], minval=0.0, maxval=1.0)
+  left_ctx_len = left_ratio * span_lens_float * (mask_alpha - 1)
+  left_ctx_len = round_to_int(left_ctx_len)
+
+  # Compute the offset from left start to the right end
+  right_offset = round_to_int(span_lens_float * mask_alpha) - left_ctx_len
+
+  # Get the actual begin and end indices
+  beg_indices = (
+      tf.cumsum(left_ctx_len) + tf.cumsum(right_offset, exclusive=True))
+  end_indices = beg_indices + span_lens
+
+  # Remove out of range indices
+  valid_idx_mask = end_indices < tgt_len
+  beg_indices = tf.boolean_mask(beg_indices, valid_idx_mask)
+  end_indices = tf.boolean_mask(end_indices, valid_idx_mask)
+
+  # Shuffle valid indices
+  num_valid = tf.cast(tf.shape(beg_indices)[0], tf.int64)
+  order = tf.random.shuffle(tf.range(num_valid, dtype=tf.int64))
+  beg_indices = tf.gather(beg_indices, order)
+  end_indices = tf.gather(end_indices, order)
+
+  return _idx_pair_to_mask(beg_indices, end_indices, inputs, tgt_len,
+                           num_predict, cls_id, sep_id)
+
+def _idx_pair_to_mask(beg_indices, end_indices, inputs, tgt_len, num_predict, cls_id, sep_id):
+  """Turn beg and end indices into actual mask."""
+  non_func_mask = tf.logical_and(
+      tf.not_equal(inputs, sep_id), tf.not_equal(inputs, cls_id))
+  all_indices = tf.where(non_func_mask, tf.range(tgt_len, dtype=tf.int64),
+                         tf.constant(-1, shape=[tgt_len], dtype=tf.int64))
+  candidate_matrix = tf.cast(
+      tf.logical_and(all_indices[None, :] >= beg_indices[:, None],
+                     all_indices[None, :] < end_indices[:, None]), tf.float32)
+  cumsum_matrix = tf.reshape(
+      tf.cumsum(tf.reshape(candidate_matrix, [-1])), [-1, tgt_len])
+  masked_matrix = tf.cast(cumsum_matrix <= num_predict, tf.float32)
+  target_mask = tf.reduce_sum(candidate_matrix * masked_matrix, axis=0)
+  is_masked = tf.cast(target_mask, tf.bool)
+
+  return is_masked, target_mask
+
+def _local_perm(inputs, is_masked, perm_size, seq_len, leak_ratio, cls_id, sep_id):
+  index = tf.range(seq_len, dtype=tf.int64)
+  index = tf.transpose(tf.reshape(index, [-1, perm_size]))
+  index = tf.random.shuffle(index)
+  index = tf.reshape(tf.transpose(index), [-1])
+
+  # non-functional tokens
+  non_func_tokens = tf.logical_not(
+      tf.logical_or(tf.equal(inputs, sep_id), tf.equal(inputs, cls_id)))
+  masked_tokens = tf.logical_and(is_masked, non_func_tokens)
+  non_masked_or_func_tokens = tf.logical_not(masked_tokens)
+
+  smallest_index = -2 * tf.ones([seq_len], dtype=tf.int64)
+
+  # Similar to BERT, randomly leak some masked tokens
+  if leak_ratio > 0:
+    leak_tokens = tf.logical_and(
+        masked_tokens,
+        tf.random.uniform([seq_len], maxval=1.0) < leak_ratio)
+    can_attend_self = tf.logical_or(non_masked_or_func_tokens, leak_tokens)
+  else:
+    can_attend_self = non_masked_or_func_tokens
+  to_index = tf.where(can_attend_self, smallest_index, index)
+  from_index = tf.where(can_attend_self, to_index + 1, to_index)
+
+  # For masked tokens, can attend if i > j
+  # For context tokens, always can attend each other
+  can_attend = from_index[:, None] > to_index[None, :]
+
+  # In modeling, 1 indicates cannot attend. Hence, reverse the value here.
+  perm_mask = 1.0 - tf.cast(can_attend, tf.float32)
+
+  # Only masked tokens are included in the loss
+  target_mask = tf.cast(masked_tokens, tf.float32)
+
+  # construct inputs_k
+  inputs_k = inputs
+
+  # construct inputs_q
+  inputs_q = masked_tokens
+
+  return perm_mask, target_mask, inputs_k, inputs_q
+
+
+
+
+class XLNetPretrainDatasetBuilder(object):
+  def __init__(self,
+               seq_len,
+               reuse_len,
+               batch_size,
+               num_predict,
+               perm_size,
+               leak_ratio,
+               max_num_tokens=5,
+               min_num_tokens=1,
+                cls_id=3,
+                sep_id=4):
+    self._seq_len = seq_len
+    self._reuse_len = reuse_len
+    self._batch_size = batch_size
+    self._num_predict = num_predict
+    self._perm_size = perm_size
+    self._leak_ratio = leak_ratio
+    self._max_num_tokens = max_num_tokens
+    self._min_num_tokens = min_num_tokens
+    self._cls_id = cls_id
+    self._sep_id = sep_id
+
+  def build_dataset(self, filenames):
+    def func(example):
+      token_ids = example.pop('token_ids')
+      boundary = None
+
+      
+      is_masked, _ = _token_span_mask(token_ids,
+                                      self._seq_len,
+                                      self._num_predict,
+                                      self._min_num_tokens,
+                                      self._max_num_tokens,
+                                      self._cls_id,
+                                      self._sep_id)
+
+      non_reuse_len = self._seq_len - self._reuse_len
+
+      # assert
+
+      perm_mask_0, target_mask_0, input_k_0, input_q_0 = _local_perm(
+          token_ids[:self._reuse_len],
+          is_masked[:self._reuse_len],
+          self._perm_size, self._reuse_len,
+          self._leak_ratio, self._cls_id, self._sep_id)
+
+      perm_mask_1, target_mask_1, input_k_1, input_q_1 = _local_perm(
+          token_ids[self._reuse_len:],
+          is_masked[self._reuse_len:],
+          self._perm_size, non_reuse_len,
+          self._leak_ratio, self._cls_id, self._sep_id)
+
+      perm_mask_0 = tf.concat(
+          [perm_mask_0, tf.ones([self._reuse_len, non_reuse_len])], axis=1)
+      perm_mask_1 = tf.concat(
+          [tf.zeros([non_reuse_len, self._reuse_len]), perm_mask_1], axis=1)
+
+      perm_mask = tf.concat([perm_mask_0, perm_mask_1], axis=0)
+      target_mask = tf.concat([target_mask_0, target_mask_1], axis=0)
+      input_k = tf.concat([input_k_0, input_k_1], axis=0)
+      input_q = tf.concat([input_q_0, input_q_1], axis=0)
+
+      example['perm_mask'] = tf.reshape(perm_mask, [self._seq_len, self._seq_len])
+      example['input_ids'] = tf.reshape(input_k, [self._seq_len])
+      example['input_q'] = tf.reshape(input_q, [self._seq_len])
+
+      target = token_ids
+
+      indices = tf.range(self._seq_len, dtype='int64')
+      bool_target_mask = tf.cast(target_mask, 'bool')
+      indices = tf.boolean_mask(indices, bool_target_mask)     
+
+      actual_num_predict = tf.shape(indices)[0]
+      pad_len = self._num_predict - actual_num_predict 
+
+      target_mapping = tf.one_hot(indices, self._seq_len, dtype='float32')
+      paddings = tf.zeros([pad_len, self._seq_len], dtype='float32')
+      target_mapping = tf.concat([target_mapping, paddings], axis=0)
+      example['target_mapping'] = tf.reshape(target_mapping, 
+              [self._num_predict, self._seq_len])
+
+      target = tf.boolean_mask(target, bool_target_mask)
+      paddings = tf.zeros([pad_len], dtype=target.dtype)
+      target = tf.concat([target, paddings], axis=0) 
+      example['target'] = tf.reshape(target, [self._num_predict])
+
+
+      target_mask = tf.concat([
+          tf.ones([actual_num_predict], dtype='float32'),
+          tf.zeros([pad_len], dtype='float32')], axis=0)
+      example['target_mask'] = tf.reshape(target_mask, [self._num_predict])
+
+      for key in list(example.keys()):
+        val = example[key]
+        if tf.keras.backend.is_sparse(val):
+          val = tf.sparse.to_dense(val)
+        if val.dtype == tf.int64:
+          val = tf.cast(val, 'int32')
+
+        example[key] = val
+
+      return example
+
+    dataset = tf.data.Dataset.from_tensor_slices(filenames)
+    dataset = dataset.shuffle(len(filenames))
+    
+    dataset = tf.data.TFRecordDataset(dataset)
+
+    dataset = dataset.cache().repeat().map(parse_fn_xlnet_pretrain)
+
+    dataset = dataset.map(func)
+
+    dataset = dataset.batch(self._batch_size, drop_remainder=True)
+    dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+
+    return dataset
+
+
+class SquadDatasetBuilder(object):
+  def __init__(self, batch_size, seq_len, training=False):
+    self._batch_size= batch_size
+    self._seq_len = seq_len
+    self._training = training
+
+  def build_dataset(self, filenames):
+
+    parse_fn = functools.partial(parse_fn_squad,
+                                 seq_len=self._seq_len,
+                                 training=self._training) 
+
+    dataset = create_and_preprocess(filenames,
+                          parse_fn=parse_fn,
+                          shuffle=self._training,
+                          num_parallel_calls=1,
+                          filter_fn=None,
+                          buffer_size_per_file=None,
+                          random_seed=None)
+
+    dataset = dataset.batch(self._batch_size)
+    if self._training:
+      dataset = dataset.repeat(-1)
+    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    return dataset
+
+
+class ClassificationDatasetBuilder(object):
+  def __init__(self, batch_size, seq_len, training=False):
+    self._batch_size = batch_size
+    self._seq_len = seq_len
+    self._training = training
+
+  def build_dataset(self, filenames):
+    parse_fn = functools.partial(parse_fn_sequence_classification_bert,
+                                 seq_len=self._seq_len) 
+
+    dataset = create_and_preprocess(filenames,
+        parse_fn=parse_fn,
+        shuffle=self._training,
+        num_parallel_calls=1,
+        filter_fn=None,
+        buffer_size_per_file=None,
+        random_seed=None)
+    dataset = dataset.batch(self._batch_size)
+    if self._training:
+      dataset = dataset.repeat(-1)
+    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    return dataset
+
