@@ -47,6 +47,7 @@ def parse_fn_single_sequence(serialized_example):
 
 def parse_fn_sequence_classification(serialized_example):
   """Deserializes a protobuf message into a single (batched) sequence of token
+  IDs and class label.
 
   Args:
     serialized_example: string scalar tensor, serialized example of 
@@ -67,7 +68,20 @@ def parse_fn_sequence_classification(serialized_example):
 
 
 def parse_fn_xlnet_pretrain(serialized_example, seq_len=512):
-  """
+  """Deserializes a protobuf message into a single (batched) sequence of token
+  IDs along with their segment IDs.
+
+  Args:
+    serialized_example: string scalar tensor, serialized example of
+      a token IDs and segment IDs.
+    seq_len: (Optional) int scalar, sequence length. Defaults to 512.
+
+  Returns:
+    parsed: a dict with the following entries
+      'token_ids' -> int tensor of shape [seq_len], sequence of token IDs in a
+        single batch.
+      'segment_ids' -> int tensor of shape [seq_len], vector of segment IDs for
+        each token in `token_ids`.
   """
   parse_dict = {'token_ids': tf.io.FixedLenFeature([seq_len], 'int64'),
                 'segment_ids': tf.io.FixedLenFeature([seq_len], 'int64')}
@@ -77,6 +91,12 @@ def parse_fn_xlnet_pretrain(serialized_example, seq_len=512):
 
 def parse_fn_squad(serialized_example, seq_len=512, training=False):
   """
+
+  Args:
+
+
+  Returns:
+    
   """
   parse_dict = {
       'token_ids': tf.io.FixedLenFeature([seq_len], 'int64'),
@@ -101,6 +121,12 @@ def parse_fn_squad(serialized_example, seq_len=512, training=False):
 
 def parse_fn_sequence_classification_bert(serialized_example, seq_len=512):
   """
+
+  Args:
+
+
+  Returns:
+    
   """
   parse_dict = {
     "token_ids": tf.io.FixedLenFeature([seq_len], tf.int64),

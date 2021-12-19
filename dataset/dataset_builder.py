@@ -428,116 +428,10 @@ class SequenceClassifierDatasetBuilder(object):
     return dataset
 
 
-def _token_span_mask(inputs, tgt_len, num_predict, min_num_tokens,
-                     max_num_tokens, cls_id, sep_id):
-  """Sample token spans as prediction targets."""
-  mask_alpha = tgt_len / num_predict
-  round_to_int = lambda x: tf.cast(tf.round(x), tf.int64)
-
-  # Sample span lengths from a zipf distribution
-  span_len_seq = np.arange(min_num_tokens, max_num_tokens + 1)
-  probs = np.array([1.0 / (i + 1) for i in span_len_seq])
-
-  probs /= np.sum(probs)
-  logits = tf.constant(np.log(probs), dtype=tf.float32)
-  span_lens = tf.random.categorical(
-      logits=logits[None],
-      num_samples=num_predict,
-      dtype=tf.int64,
-  )[0] + min_num_tokens
-
-  # Sample the ratio [0.0, 1.0) of left context lengths
-  span_lens_float = tf.cast(span_lens, tf.float32)
-  left_ratio = tf.random.uniform(shape=[num_predict], minval=0.0, maxval=1.0)
-  left_ctx_len = left_ratio * span_lens_float * (mask_alpha - 1)
-  left_ctx_len = round_to_int(left_ctx_len)
-
-  # Compute the offset from left start to the right end
-  right_offset = round_to_int(span_lens_float * mask_alpha) - left_ctx_len
-
-  # Get the actual begin and end indices
-  beg_indices = (
-      tf.cumsum(left_ctx_len) + tf.cumsum(right_offset, exclusive=True))
-  end_indices = beg_indices + span_lens
-
-  # Remove out of range indices
-  valid_idx_mask = end_indices < tgt_len
-  beg_indices = tf.boolean_mask(beg_indices, valid_idx_mask)
-  end_indices = tf.boolean_mask(end_indices, valid_idx_mask)
-
-  # Shuffle valid indices
-  num_valid = tf.cast(tf.shape(beg_indices)[0], tf.int64)
-  order = tf.random.shuffle(tf.range(num_valid, dtype=tf.int64))
-  beg_indices = tf.gather(beg_indices, order)
-  end_indices = tf.gather(end_indices, order)
-
-  return _idx_pair_to_mask(beg_indices, end_indices, inputs, tgt_len,
-                           num_predict, cls_id, sep_id)
-
-def _idx_pair_to_mask(beg_indices, end_indices, inputs, tgt_len, num_predict, cls_id, sep_id):
-  """Turn beg and end indices into actual mask."""
-  non_func_mask = tf.logical_and(
-      tf.not_equal(inputs, sep_id), tf.not_equal(inputs, cls_id))
-  all_indices = tf.where(non_func_mask, tf.range(tgt_len, dtype=tf.int64),
-                         tf.constant(-1, shape=[tgt_len], dtype=tf.int64))
-  candidate_matrix = tf.cast(
-      tf.logical_and(all_indices[None, :] >= beg_indices[:, None],
-                     all_indices[None, :] < end_indices[:, None]), tf.float32)
-  cumsum_matrix = tf.reshape(
-      tf.cumsum(tf.reshape(candidate_matrix, [-1])), [-1, tgt_len])
-  masked_matrix = tf.cast(cumsum_matrix <= num_predict, tf.float32)
-  target_mask = tf.reduce_sum(candidate_matrix * masked_matrix, axis=0)
-  is_masked = tf.cast(target_mask, tf.bool)
-
-  return is_masked, target_mask
-
-def _local_perm(inputs, is_masked, perm_size, seq_len, leak_ratio, cls_id, sep_id):
-  index = tf.range(seq_len, dtype=tf.int64)
-  index = tf.transpose(tf.reshape(index, [-1, perm_size]))
-  index = tf.random.shuffle(index)
-  index = tf.reshape(tf.transpose(index), [-1])
-
-  # non-functional tokens
-  non_func_tokens = tf.logical_not(
-      tf.logical_or(tf.equal(inputs, sep_id), tf.equal(inputs, cls_id)))
-  masked_tokens = tf.logical_and(is_masked, non_func_tokens)
-  non_masked_or_func_tokens = tf.logical_not(masked_tokens)
-
-  smallest_index = -2 * tf.ones([seq_len], dtype=tf.int64)
-
-  # Similar to BERT, randomly leak some masked tokens
-  if leak_ratio > 0:
-    leak_tokens = tf.logical_and(
-        masked_tokens,
-        tf.random.uniform([seq_len], maxval=1.0) < leak_ratio)
-    can_attend_self = tf.logical_or(non_masked_or_func_tokens, leak_tokens)
-  else:
-    can_attend_self = non_masked_or_func_tokens
-  to_index = tf.where(can_attend_self, smallest_index, index)
-  from_index = tf.where(can_attend_self, to_index + 1, to_index)
-
-  # For masked tokens, can attend if i > j
-  # For context tokens, always can attend each other
-  can_attend = from_index[:, None] > to_index[None, :]
-
-  # In modeling, 1 indicates cannot attend. Hence, reverse the value here.
-  perm_mask = 1.0 - tf.cast(can_attend, tf.float32)
-
-  # Only masked tokens are included in the loss
-  target_mask = tf.cast(masked_tokens, tf.float32)
-
-  # construct inputs_k
-  inputs_k = inputs
-
-  # construct inputs_q
-  inputs_q = masked_tokens
-
-  return perm_mask, target_mask, inputs_k, inputs_q
-
-
-
-
 class XLNetPretrainDatasetBuilder(object):
+  """Builds a tf.data.Dataset instance that generates inputs and targets for
+  pretraining XLNet model using permutation language model objective.
+  """
   def __init__(self,
                seq_len,
                reuse_len,
@@ -547,8 +441,25 @@ class XLNetPretrainDatasetBuilder(object):
                leak_ratio,
                max_num_tokens=5,
                min_num_tokens=1,
-                cls_id=3,
-                sep_id=4):
+               cls_id=3,
+               sep_id=4,
+               shuffle_files=False):
+    """Constructor.
+
+    Args:
+      seq_len: int scalar, length of sequence in a batch.
+      reuse_len: int scalar, number of token that can be reused as memory.
+      batch_size: int scalar, number of sequences in a batch.
+      num_predict: int scalar, number of tokens to predict.
+      perm_size: int scalar, window size of the permutation.
+      leak_ratio: float scalar, percent of masked tokens that are leaked.
+      max_num_tokens: int scalar, maximum number of tokens to sample in a span.
+      min_num_tokens: int scalar, minimum number of tokens to sample in a span.
+      cls_id: int scalar, the ID of the special token CLS.
+      sep_id: int scalar, the ID of the special token SEP.
+      shuffle_files: bool scalar, whether to shuffle the input TFRecord files,
+        defaults to False.
+    """
     self._seq_len = seq_len
     self._reuse_len = reuse_len
     self._batch_size = batch_size
@@ -559,76 +470,232 @@ class XLNetPretrainDatasetBuilder(object):
     self._min_num_tokens = min_num_tokens
     self._cls_id = cls_id
     self._sep_id = sep_id
+    self._shuffle_files = shuffle_files
+
+    if reuse_len % perm_size != 0:
+      raise ValueError(f'`reuse_len` must be divisible by `perm_size`, got '
+          '{reuse_len} and {perm_size}.')
+
+  def _token_span_mask(self, token_ids):
+    """Sample the indices of prediction targets (i.e. consecutive tokens) for
+    the span-based prediction mask.
+
+    The input sequence is split into multiple sequence spans as follows
+    1st span: L..LT..TR..R
+
+    which is immediately followd by
+
+    2nd span: L..LT..TR..R
+
+    ... ...
+
+    Note that each span "L..LT..TR..R" starts with a left context "L..L",
+    followed by the prediction targets "T..T", and ended with the right context
+    "R..R".
+
+    Args:
+      token_ids: int tensor of shape [seq_len], sequence of token IDs in a
+        single batch.
+
+    Returns:
+      mask: bool tensor of shape [seq_len], vector indicating whether the token
+        is the prediction target (1) or not (0).
+    """
+    # compute the partial prediction constant, i.e. "K" as in the paper
+    mask_alpha = self._seq_len / self._num_predict
+    round_to_int = lambda x: tf.cast(tf.round(x), 'int64')
+
+    # sample `num_predict` lengths ("L" as in the paper) from the set
+    # {min_num_tokens, min_num_tokens + 1, ... max_num_tokens}, such that
+    # shorter lengths are more likely than longer ones
+    span_len_seq = tf.cast(
+        tf.range(self._min_num_tokens, self._max_num_tokens + 1), 'float32')
+    probs = 1.0 / (span_len_seq + 1)
+    probs /= tf.reduce_sum(probs)
+    logits = tf.math.log(probs)
+    span_lens = tf.random.categorical(
+        logits=logits[tf.newaxis],
+        num_samples=self._num_predict,
+        dtype='int64')[0] + self._min_num_tokens
+    span_lens_float = tf.cast(span_lens, 'float32')
+
+    # each span has length of `span_lens_float[i] * mask_alpha` (i.e. L * K),
+    # where `span_lens_float[i]` (i.e. L) is allocated for prediction target,
+    # while the remaining `span_lens_float[i] * (mask_alpha - 1)` is allocated
+    # as the left plus the right context.
+    left_ratio = tf.random.uniform(
+        shape=[self._num_predict], minval=0.0, maxval=1.0)
+    left_ctx_len = left_ratio * span_lens_float * (mask_alpha - 1)
+    left_ctx_len = round_to_int(left_ctx_len)
+
+    # for each sequence span, compute the total length of prediction targets
+    # plus the right context
+    right_offset = round_to_int(span_lens_float * mask_alpha) - left_ctx_len
+
+    # and the actual start and end indices of prediction targets
+    start_indices = (
+        tf.cumsum(left_ctx_len) + tf.cumsum(right_offset, exclusive=True))
+    end_indices = start_indices + span_lens
+
+    # remove out of range indices
+    valid_indices = end_indices < self._seq_len
+    start_indices = tf.boolean_mask(start_indices, valid_indices)
+    end_indices = tf.boolean_mask(end_indices, valid_indices)
+
+    # shuffle valid indices
+    num_valid = tf.cast(tf.shape(start_indices)[0], 'int64')
+    order = tf.random.shuffle(tf.range(num_valid, dtype='int64'))
+    start_indices = tf.gather(start_indices, order)
+    end_indices = tf.gather(end_indices, order)
+
+    mask = self._index_pair_to_mask(
+        start_indices, end_indices, token_ids)
+    return mask
+
+  def _index_pair_to_mask(self, start_indices, end_indices, token_ids):
+    """Convert start and end indices of prediction targets into binary mask.
+
+    Args:
+      startindices: int tensor of shape [num_spans], start indices of
+        prediction targets.
+      end_indices: int tensor of shape [num_spans], end indices of prediction
+        targets.
+      token_ids: int tensor of shape [seq_len], sequence of token IDs in a
+        single batch.
+
+    Returns:
+      mask: bool tensor of shape [seq_len], vector indicating whether the token
+        is the prediction target (1) or not (0).
+    """
+    # [seq_len]
+    non_func_mask = tf.logical_and(tf.not_equal(token_ids, self._sep_id),
+                                   tf.not_equal(token_ids, self._cls_id))
+
+    # [seq_len]
+    all_indices = tf.where(
+        non_func_mask,
+        tf.range(self._seq_len, dtype='int64'),
+        tf.constant(-1, shape=[self._seq_len], dtype='int64'))
+
+    # [num_spans, seq_len]
+    candidate_matrix = tf.logical_and(
+        all_indices[tf.newaxis] >= start_indices[:, tf.newaxis],
+        all_indices[tf.newaxis] < end_indices[:, tf.newaxis])
+
+    # [num_spans, seq_len]
+    cumsum_matrix = tf.reshape(
+        tf.cumsum(tf.reshape(tf.cast(candidate_matrix, 'float32'), [-1])),
+        [-1, self._seq_len])
+
+    mask = tf.reduce_any(
+        tf.logical_and(candidate_matrix, cumsum_matrix <= self._num_predict),
+        axis=0)
+
+    return mask
+
+  def _local_perm(self, mask):
+    """Create permutation mask.
+
+    Args:
+      mask: bool tensor of shape [mask_seq_len], vector indicating whether the
+        token is the prediction target (1) or not (0).
+
+    Returns:
+      perm_mask: bool tensor of shape [mask_seq_len, mask_seq_len], where
+        the `i`th token cannot attend the `j`th token if `perm_mask[i, j] = 1`.
+    """
+    # the new indices of each token after a random permutation order is sampled
+    index = tf.range(self._reuse_len, dtype='int64')
+    index = tf.transpose(tf.reshape(index, [-1, self._perm_size]))
+    index = tf.random.shuffle(index)
+    index = tf.reshape(tf.transpose(index), [-1])
+
+    # non-prediction targets can always self-attend
+    can_attend_self = tf.logical_not(mask)
+
+    smallest_index = tf.constant(-2, dtype='int64', shape=[self._reuse_len])
+
+    if self._leak_ratio > 0:
+      # add a small portion of prediciton targets to the set of
+      # "can-attend-self" tokens
+      leak_tokens = tf.logical_and(
+          mask,
+          tf.random.uniform([self._reuse_len], maxval=1.0) < self._leak_ratio)
+      can_attend_self = tf.logical_or(can_attend_self, leak_tokens)
+
+    to_index = tf.where(can_attend_self, smallest_index, index)
+    from_index = tf.where(can_attend_self, to_index + 1, to_index)
+
+    can_attend = from_index[:, tf.newaxis] > to_index[tf.newaxis, :]
+
+    perm_mask = 1.0 - tf.cast(can_attend, 'float32')
+
+    return perm_mask
 
   def build_dataset(self, filenames):
+    """Builds dataset for pretraining XLNet model.
+
+    Args:
+      filenames: a list of strings, names of TFRecord files.
+
+    Returns:
+      dataset: an instance of tf.data.Dataset, each item is a dict with the
+        following entries
+        'perm_mask' -> float tensor of shape [batch_size, seq_len, seq_len],
+          where the `i`th token cannot attend the `j`th token if
+          `perm_mask[b, i, j] = 1`.
+        'token_ids' -> int tensor of shape [batch_size, seq_len], sequences of
+          token IDs
+        'target_mapping' -> float tensor of shape [batch_size, num_predict,
+          seq_len], where `target_mapping[b, i]` is the one-hot encoding of the
+          index of the prediction target for the `i` prediction task (out of
+          `num_predict`). May be zero-padded in the 2nd dimension.
+        'target' -> int tensor of shape [batch_size, num_predict], the token
+          indices of the prediction targets. May be zero-padded in the 2nd
+          dimension.
+        'target_mask' -> float tensor of shape [batch_size, num_predict],
+          vectors indicating if an entry in `target` is the actual prediction
+          target (1) or padded value (0).
+        'segment_ids' -> int tensor of shape [batch_size, seq_len], where
+          `segment_ids[b]` is an vector of segment IDs for each token in
+          `token_ids`.
+    """
     def func(example):
-      token_ids = example.pop('token_ids')
-      boundary = None
+      token_ids = example['token_ids']
 
-      
-      is_masked, _ = _token_span_mask(token_ids,
-                                      self._seq_len,
-                                      self._num_predict,
-                                      self._min_num_tokens,
-                                      self._max_num_tokens,
-                                      self._cls_id,
-                                      self._sep_id)
-
+      # compute permutation mask
+      mask = self._token_span_mask(token_ids)
+      perm_mask_0 = self._local_perm(mask[:self._reuse_len])
+      perm_mask_1 = self._local_perm(mask[self._reuse_len:])
       non_reuse_len = self._seq_len - self._reuse_len
-
-      # assert
-
-      perm_mask_0, target_mask_0, input_k_0, input_q_0 = _local_perm(
-          token_ids[:self._reuse_len],
-          is_masked[:self._reuse_len],
-          self._perm_size, self._reuse_len,
-          self._leak_ratio, self._cls_id, self._sep_id)
-
-      perm_mask_1, target_mask_1, input_k_1, input_q_1 = _local_perm(
-          token_ids[self._reuse_len:],
-          is_masked[self._reuse_len:],
-          self._perm_size, non_reuse_len,
-          self._leak_ratio, self._cls_id, self._sep_id)
-
       perm_mask_0 = tf.concat(
           [perm_mask_0, tf.ones([self._reuse_len, non_reuse_len])], axis=1)
       perm_mask_1 = tf.concat(
           [tf.zeros([non_reuse_len, self._reuse_len]), perm_mask_1], axis=1)
-
       perm_mask = tf.concat([perm_mask_0, perm_mask_1], axis=0)
-      target_mask = tf.concat([target_mask_0, target_mask_1], axis=0)
-      input_k = tf.concat([input_k_0, input_k_1], axis=0)
-      input_q = tf.concat([input_q_0, input_q_1], axis=0)
 
-      example['perm_mask'] = tf.reshape(perm_mask, [self._seq_len, self._seq_len])
-      example['input_ids'] = tf.reshape(input_k, [self._seq_len])
-      example['input_q'] = tf.reshape(input_q, [self._seq_len])
-
-      target = token_ids
-
+      # compute target mapping and mask
       indices = tf.range(self._seq_len, dtype='int64')
-      bool_target_mask = tf.cast(target_mask, 'bool')
-      indices = tf.boolean_mask(indices, bool_target_mask)     
-
+      indices = tf.boolean_mask(indices, mask)
       actual_num_predict = tf.shape(indices)[0]
-      pad_len = self._num_predict - actual_num_predict 
+      pad_len = self._num_predict - actual_num_predict
 
       target_mapping = tf.one_hot(indices, self._seq_len, dtype='float32')
       paddings = tf.zeros([pad_len, self._seq_len], dtype='float32')
       target_mapping = tf.concat([target_mapping, paddings], axis=0)
-      example['target_mapping'] = tf.reshape(target_mapping, 
-              [self._num_predict, self._seq_len])
 
-      target = tf.boolean_mask(target, bool_target_mask)
+      target = tf.boolean_mask(token_ids, mask)
       paddings = tf.zeros([pad_len], dtype=target.dtype)
-      target = tf.concat([target, paddings], axis=0) 
-      example['target'] = tf.reshape(target, [self._num_predict])
-
+      target = tf.concat([target, paddings], axis=0)
 
       target_mask = tf.concat([
           tf.ones([actual_num_predict], dtype='float32'),
           tf.zeros([pad_len], dtype='float32')], axis=0)
-      example['target_mask'] = tf.reshape(target_mask, [self._num_predict])
+
+      example['perm_mask'] = perm_mask
+      example['target_mapping'] = target_mapping
+      example['target'] = target
+      example['target_mask'] = target_mask
 
       for key in list(example.keys()):
         val = example[key]
@@ -642,11 +709,13 @@ class XLNetPretrainDatasetBuilder(object):
       return example
 
     dataset = tf.data.Dataset.from_tensor_slices(filenames)
-    dataset = dataset.shuffle(len(filenames))
+    if self._shuffle_files:
+      dataset = dataset.shuffle(len(filenames))
     
     dataset = tf.data.TFRecordDataset(dataset)
 
-    dataset = dataset.cache().repeat().map(parse_fn_xlnet_pretrain)
+    dataset = dataset.cache().repeat().map(
+        functools.partial(parse_fn_xlnet_pretrain, seq_len=self._seq_len))
 
     dataset = dataset.map(func)
 
