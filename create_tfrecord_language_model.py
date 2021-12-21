@@ -1,12 +1,12 @@
-"""Convert text corpus (raw text files) into TFRecord files for language 
+"""Convert text corpus (raw text files) into TFRecord files for language
 modeling.
 
 Usage:
- 
-  1. Create subword tokenizer from raw text file(s) 
+
+  1. Create subword tokenizer from raw text file(s)
   $ python create_tfrecord_language_model.py \
       --filenames=file1.txt,file2.txt... \
-      --subword 
+      --subword
 
   2. Restore subword tokenizer from existing vocab file `vocab_name`
   $ python create_tfrecord_language_model.py \
@@ -18,13 +18,13 @@ Usage:
   3. Create whole word tokenizer from raw text file(s)
   $ python create_tfrecord_language_model.py \
       --filenames=file1.txt,file2.txt... \
-      
+
   4. Restore whole word tokenizer from existing vocab file `vocab_name`
       --filenames=file1.txt,file2.txt... \
       --vocab_name=vocab_name
-      --use_exist_vocab    
+      --use_exist_vocab
 
-Configuration of the dataset will be written to .json files, which will be 
+Configuration of the dataset will be written to .json files, which will be
 needed when building the tf.data.Dataset instance.
 """
 import json
@@ -113,15 +113,15 @@ def main(_):
       tokenizer.save_to_file(vocab_name)
   else:
     if use_exist_vocab:
-      print('Restore whole word tokenizer from existing vocab: %s...' 
+      print('Restore whole word tokenizer from existing vocab: %s...'
           % vocab_name)
       tokenizer = tokenization.restore_tokenizer_from_vocab_files(vocab_name)
     else:
       print('Create fresh whole word tokenizer from raw text files...')
       tokenizer = tokenization.create_tokenizer_from_raw_text_files(
-          filenames, 
-          target_vocab_size=target_vocab_size, 
-          min_count=min_count, 
+          filenames,
+          target_vocab_size=target_vocab_size,
+          min_count=min_count,
           file_char_limit=file_char_limit)
       tokenizer.save_to_file(vocab_name)
 
@@ -135,7 +135,7 @@ def main(_):
   writer = tf.io.TFRecordWriter(
       os.path.join(output_dir, output_filename + '.tfrecord'))
 
-  num_steps = data.size // batch_size  
+  num_steps = data.size // batch_size
   data = data[:batch_size * num_steps]
   data = data.reshape(batch_size, num_steps)
 

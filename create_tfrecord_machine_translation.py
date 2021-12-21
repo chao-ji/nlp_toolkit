@@ -1,8 +1,8 @@
-"""Convert parallel corpus (raw text files) into TFRecord files for training 
-machine translation models. 
+"""Convert parallel corpus (raw text files) into TFRecord files for training
+machine translation models.
 
 The parallel corpus should be text files (of unicode characters) s1.txt, t1.txt,
-s2.txt, t2.txt, ... where s{i}.txt and t{i}.txt should have the same number of 
+s2.txt, t2.txt, ... where s{i}.txt and t{i}.txt should have the same number of
 lines.
 """
 import itertools
@@ -27,14 +27,14 @@ flags.DEFINE_list(
 flags.DEFINE_float(
     'file_char_limit', 1e6, 'Number of chars to read from each text file.')
 flags.DEFINE_integer(
-    'target_vocab_size', 32768, 'The desired vocabulary size. Ignored if ' 
+    'target_vocab_size', 32768, 'The desired vocabulary size. Ignored if '
         '`min_count` is not None.')
 flags.DEFINE_integer(
     'threshold', 327, 'If the difference between actual vocab size and '
         '`target_vocab_size` is smaller than this, the binary search '
         'terminates. Ignored if `min_count` is not None.')
 flags.DEFINE_integer(
-    'min_count', 6, 'The minimum count required for a subtoken to be ' 
+    'min_count', 6, 'The minimum count required for a subtoken to be '
         'included in the vocabulary.')
 flags.DEFINE_string(
     'vocab_name', 'vocab', 'Vocabulary will be stored in two files: '
@@ -87,7 +87,7 @@ def main(_):
   source_data = itertools.chain(*source_files)
   target_data = itertools.chain(*target_files)
 
-  filepaths = [os.path.join(output_dir, '%05d-of-%05d.tfrecord' % 
+  filepaths = [os.path.join(output_dir, '%05d-of-%05d.tfrecord' %
       (i + 1, total_shards)) for i in range(total_shards)]
 
   writers = [tf.io.TFRecordWriter(fn) for fn in filepaths]

@@ -13,7 +13,7 @@ from .parse_fn import parse_fn_squad
 from .parse_fn import parse_fn_sequence_classification_bert
 
 
-# Buffer size for reading TFRecord files. Should be generally larger than the 
+# Buffer size for reading TFRecord files. Should be generally larger than the
 # actual size (in bytes) of each TFRecord file.
 _READ_RECORD_BUFFER = 8 * 1000 * 1000
 
@@ -23,40 +23,37 @@ _MIN_BOUNDARY = 8
 # The rate by which the boundary grows for the next bucket.
 _BOUNDARY_SCALE = 1.1
 
-CLS_ID = 3
-SEP_ID = 4
 
-
-def create_and_preprocess(filenames, 
+def create_and_preprocess(filenames,
                           parse_fn,
-                          shuffle, 
+                          shuffle,
                           num_parallel_calls,
-                          filter_fn=None, 
-                          buffer_size_per_file=None, 
+                          filter_fn=None,
+                          buffer_size_per_file=None,
                           random_seed=None):
-  """Initialize tf.data.Dataset instance and apply parsing (deserialization), 
+  """Initialize tf.data.Dataset instance and apply parsing (deserialization),
   shuffling and filtering preprocessing transforms.
 
   Args:
     filenames: a list of strings, names of TFRecord files.
     parse_fn: callable, function that deserializes protobuf message.
     shuffle: bool scalar, if False, the training examples will be generated
-      deterministically. 
+      deterministically.
     num_parallel_calls: int scalar, num of TFRecord files to be processed
       concurrently.
     filter_fn: callable, function that applies filtering.
-    buffer_size_per_file: int scalar, buffer size used to shuffle records in a 
+    buffer_size_per_file: int scalar, buffer size used to shuffle records in a
       single *.tfrecord file.
-    random_seed: int scalar, random seed. 
+    random_seed: int scalar, random seed.
 
   Returns:
-    dataset: a tf.data.Dataset instance. 
+    dataset: a tf.data.Dataset instance.
   """
   # shape: ()
   dataset = tf.data.Dataset.from_tensor_slices(filenames).shuffle(
       len(filenames), seed=random_seed)
 
-  # set `options.experimental_deterministic` to False to shuffle the dataset 
+  # set `options.experimental_deterministic` to False to shuffle the dataset
   # shape: ()
   options = tf.data.Options()
   options.experimental_deterministic = False if shuffle else True
@@ -83,8 +80,8 @@ def create_and_preprocess(filenames,
 class BaseSequenceTransductionDatasetBuilder(object):
   """Abstract base class for building sequence transduction dataset.
 
-  A sequence transduction dataset produces int 2-tuples of tensors of shape 
-  ([batch_size, src_seq_len], [batch_size, tgt_seq_len]), holding the 
+  A sequence transduction dataset produces int 2-tuples of tensors of shape
+  ([batch_size, src_seq_len], [batch_size, tgt_seq_len]), holding the
   zero-padded token ids for batched source and target sequences. Depending
   on the batching scheme, the subclass `DynamicBatchDatasetBuilder` and
   `StaticBatchDatasetBuilder` produces tensors with *dynamic* or *static*
@@ -94,12 +91,12 @@ class BaseSequenceTransductionDatasetBuilder(object):
     """Builds the sequence transduction dataset.
 
     Args:
-      filenames: a list of strings, names of TFRecord files. 
+      filenames: a list of strings, names of TFRecord files.
 
     Returns:
       dataset: a tf.data.Dataset instance, each item is a tuple of two tensors
-        of shape [batch_size, src_seq_len] and [batch_size, tgt_seq_len], 
-        holding the token ids in source or target sequences. Each row is 
+        of shape [batch_size, src_seq_len] and [batch_size, tgt_seq_len],
+        holding the token ids in source or target sequences. Each row is
         zero-padded to the length of the longest sequence in each batch, so
         the last column contains at least one non-zero (padded) token.
     """
@@ -123,31 +120,31 @@ class BaseSequenceTransductionDatasetBuilder(object):
 
 
 class DynamicBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
-  """Builds a tf.data.Dataset instance that reads, zero-pads and batches source 
+  """Builds a tf.data.Dataset instance that reads, zero-pads and batches source
   and target token ids from pre-generated TFRecord files.
 
   Note: The produced dataset adopts the dynamic batching scheme (unlike the more
-  common static batching) -- the `batch_size` (num of seqs in a batch) may vary 
+  common static batching) -- the `batch_size` (num of seqs in a batch) may vary
   across different batches as long as `batch_size * src_seq_len` or `batch_size
   * tgt_seq_len` <= `max_num_tokens`.
   """
-  def __init__(self, 
-               max_num_tokens, 
-               shuffle, 
-               max_length, 
-               num_parallel_calls, 
+  def __init__(self,
+               max_num_tokens,
+               shuffle,
+               max_length,
+               num_parallel_calls,
                random_seed=None):
     """Constructor.
 
     Args:
-      max_num_tokens: int scalar, the maximum num of tokens in source or target 
-        sequences in each batch. 
+      max_num_tokens: int scalar, the maximum num of tokens in source or target
+        sequences in each batch.
       shuffle: bool scalar, if False, the training examples will be generated
-        deterministically. 
+        deterministically.
       max_length: int scalar, source or target seqs longer than this will be
         filtered out.
       num_parallel_calls: int scalar, num of TFRecord files to be processed
-        concurrently. 
+        concurrently.
       random_seed: int scalar, random seed.
     """
     self._max_num_tokens = max_num_tokens
@@ -155,16 +152,16 @@ class DynamicBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
     self._max_length = max_length
     self._num_parallel_calls = num_parallel_calls
     self._random_seed = random_seed
-    
+
   def _batch_examples(self, dataset):
     """Batches the sequence pairs using dynamic batching scheme.
 
     Args:
-      dataset: a tf.data.Dataset instance, each item is a tuple of two int 
+      dataset: a tf.data.Dataset instance, each item is a tuple of two int
         tensors of shape [src_seq_len] and [tgt_seq_len].
 
     Returns:
-      a tf.data.Dataset instance, each item is a tuple of two int tensors of 
+      a tf.data.Dataset instance, each item is a tuple of two int tensors of
         shape [batch_size, src_seq_len] and [batch_size, tgt_seq_len].
     """
     buckets_min, buckets_max = self._create_bucket_bounds()
@@ -220,11 +217,11 @@ class DynamicBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
     Args:
       min_boundary: int scalar, the minimum boundary.
       boundary_scale: float scalar, the rate by which the boundary grows.
-        
+
     Returns:
-      buckets_lower_bound: list of ints, lower bounds (inclusive) for sequence 
+      buckets_lower_bound: list of ints, lower bounds (inclusive) for sequence
         lengths.
-      buckets_upper_bound: list of ints, upper bounds (exclusive) for sequence 
+      buckets_upper_bound: list of ints, upper bounds (exclusive) for sequence
         lengths.
     """
     bucket_boundaries = []
@@ -240,11 +237,11 @@ class DynamicBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
 
 
 class StaticBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
-  """Builds a tf.data.Dataset instance that reads, zero-pads and batches source 
+  """Builds a tf.data.Dataset instance that reads, zero-pads and batches source
   and target token ids from pre-generated TFRecord files.
 
   Note: The produced dataset adopts the static batching scheme -- the source
-  and target token id matrices have shape [batch_size, seq_len] where 
+  and target token id matrices have shape [batch_size, seq_len] where
   `batch_size` is fixed across different minibatches.
   """
   def __init__(self,
@@ -259,11 +256,11 @@ class StaticBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
 
     Args:
       shuffle: bool scalar, if False, the training examples will be generated
-        deterministically. 
+        deterministically.
       max_length: int scalar, source or target seqs longer than this will be
         filtered out.
       num_parallel_calls: int scalar, num of TFRecord files to be processed
-        concurrently. 
+        concurrently.
       num_buckets: int scalar, num of sequence length buckets.
       bucket_width: int scalar, size of each sequence length bucket.
       random_seed: int scalar, random seed.
@@ -280,11 +277,11 @@ class StaticBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
     """Batches the sequence pairs using dynamic batching scheme.
 
     Args:
-      dataset: a tf.data.Dataset instance, each item is a tuple of two int 
+      dataset: a tf.data.Dataset instance, each item is a tuple of two int
         tensors of shape [src_seq_len] and [tgt_seq_len].
 
     Returns:
-      a tf.data.Dataset instance, each item is a tuple of two int tensors of 
+      a tf.data.Dataset instance, each item is a tuple of two int tensors of
         shape [batch_size, src_seq_len] and [batch_size, tgt_seq_len].
     """
     # mapper
@@ -316,7 +313,7 @@ class StaticBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
 
 class SequenceClassifierDatasetBuilder(object):
   """Builds a tf.data.Dataset instance that generates batched sequences to token
-  IDs (without class label) for pretraining or (with class label) for 
+  IDs (without class label) for pretraining or (with class label) for
   finetuning the sequence classifier for IMDB movie review dataset.
   """
   def __init__(self,
@@ -333,10 +330,10 @@ class SequenceClassifierDatasetBuilder(object):
       batch_size: int scalar, batch size.
       shuffle: bool scalar, if False, the training examples will be generated
         deterministically.
-      max_length: int scalar, sequences longer than this will be filtered out. 
+      max_length: int scalar, sequences longer than this will be filtered out.
       num_parallel_calls: int scalar, num of TFRecord files to be processed
         concurrently.
-      num_buckets: int scalar, num of sequence length buckets. 
+      num_buckets: int scalar, num of sequence length buckets.
       bucket_width: int scalar, size of each sequence length bucket.
       random_seed: int scalar, random seed.
     """
@@ -353,10 +350,10 @@ class SequenceClassifierDatasetBuilder(object):
 
     Args:
       filenames: a list of strings, names of TFRecord files.
-  
+
     Returns:
       dataset: a tf.data.Dataset instance, each item is an int tensors
-        of shape [batch_size, seq_len] holding the token ids. 
+        of shape [batch_size, seq_len] holding the token ids.
     """
     filter_fn = (None if self._max_length is None
         else lambda x: tf.size(x) <= self._max_length)
@@ -601,8 +598,9 @@ class XLNetPretrainDatasetBuilder(object):
         token is the prediction target (1) or not (0).
 
     Returns:
-      perm_mask: bool tensor of shape [mask_seq_len, mask_seq_len], where
-        the `i`th token cannot attend the `j`th token if `perm_mask[i, j] = 1`.
+      perm_mask: bool tensor of shape [mask_seq_len, mask_seq_len], permutation
+        mask where the `i`th token cannot attend the `j`th token if
+        `perm_mask[i, j] = 1`.
     """
     # the new indices of each token after a random permutation order is sampled
     index = tf.range(self._reuse_len, dtype='int64')
@@ -642,8 +640,8 @@ class XLNetPretrainDatasetBuilder(object):
       dataset: an instance of tf.data.Dataset, each item is a dict with the
         following entries
         'perm_mask' -> float tensor of shape [batch_size, seq_len, seq_len],
-          where the `i`th token cannot attend the `j`th token if
-          `perm_mask[b, i, j] = 1`.
+          permutation mask where the `i`th token cannot attend the `j`th token
+          if `perm_mask[b, i, j] = 1`.
         'token_ids' -> int tensor of shape [batch_size, seq_len], sequences of
           token IDs
         'target_mapping' -> float tensor of shape [batch_size, num_predict,
@@ -656,8 +654,8 @@ class XLNetPretrainDatasetBuilder(object):
         'target_mask' -> float tensor of shape [batch_size, num_predict],
           vectors indicating if an entry in `target` is the actual prediction
           target (1) or padded value (0).
-        'segment_ids' -> int tensor of shape [batch_size, seq_len], where
-          `segment_ids[b]` is an vector of segment IDs for each token in
+        'seg_ids' -> int tensor of shape [batch_size, seq_len], where
+          `seg_ids[b]` is a vector of segment IDs for each token in
           `token_ids`.
     """
     def func(example):
@@ -711,7 +709,7 @@ class XLNetPretrainDatasetBuilder(object):
     dataset = tf.data.Dataset.from_tensor_slices(filenames)
     if self._shuffle_files:
       dataset = dataset.shuffle(len(filenames))
-    
+
     dataset = tf.data.TFRecordDataset(dataset)
 
     dataset = dataset.cache().repeat().map(
@@ -726,24 +724,60 @@ class XLNetPretrainDatasetBuilder(object):
 
 
 class SquadDatasetBuilder(object):
+  """Builds a tf.data.Dataset instance that generates inputs and targets for
+  fine-tuning XLNet model for question-answering task on SQuAD dataset.
+  """
   def __init__(self, batch_size, seq_len, training=False):
+    """Constructor.
+
+    Args:
+      batch_size: int scalar, batch size.
+      seq_len: int scalar, length of sequence in a batch.
+      training: bool scalar, whether dataset is for training (True) or
+        evaluation (False).
+    """
     self._batch_size= batch_size
     self._seq_len = seq_len
     self._training = training
 
   def build_dataset(self, filenames):
+    """Builds dataset for fine-tuning XLNet model on question-answering task.
 
+    Args:
+      filenames: a list of strings, names of TFRecord files.
+
+    Returns:
+      dataset: an instance of tf.data.Dataset, each item is a dict with the
+        following entries
+        'token_ids' -> int tensor of shape [batch_size, seq_len], sequences of
+          token IDs.
+        'pad_mask' -> float tensor of shape [batch_size, seq_len], sequences of
+          1's and 0's where 1's indicate padded (masked) tokens.
+        'seg_ids' -> int tensor of shape [batch_size, seq_len], sequences of
+          segment IDs (paragraph, question, CLS, and padded tokens).
+        'cls_index' -> int tensor of shape [batch_size], indices of the CLS
+          tokens.
+        'para_mask' -> float tensor of shape [batch_size, seq_len], sequences of
+          1's and 0's where 1's indicate non-paragraph (masked) tokens.
+        and with the following additional entries if training is True
+          'start_position': int tensor of shape [batch_size], token-based start
+            indices of answer text.
+          'end_position': int tensor of shape [batch_size], token-based end
+            indices of answer text.
+          'is_impossible': bool tensor of shape [batch_size], the binary
+            classification labels.
+    """
     parse_fn = functools.partial(parse_fn_squad,
                                  seq_len=self._seq_len,
-                                 training=self._training) 
+                                 training=self._training)
 
     dataset = create_and_preprocess(filenames,
-                          parse_fn=parse_fn,
-                          shuffle=self._training,
-                          num_parallel_calls=1,
-                          filter_fn=None,
-                          buffer_size_per_file=None,
-                          random_seed=None)
+                                    parse_fn=parse_fn,
+                                    shuffle=self._training,
+                                    num_parallel_calls=1,
+                                    filter_fn=None,
+                                    buffer_size_per_file=None,
+                                    random_seed=None)
 
     dataset = dataset.batch(self._batch_size)
     if self._training:
@@ -753,25 +787,52 @@ class SquadDatasetBuilder(object):
 
 
 class ClassificationDatasetBuilder(object):
+  """Builds a tf.data.Dataset instance that generates inputs and targets for
+  fine-tuning XLNet model for sequence classification task on IMDB dataset.
+  """
   def __init__(self, batch_size, seq_len, training=False):
+    """Constructor.
+
+    Args:
+      batch_size: int scalar, batch size.
+      seq_len: int scalar, length of sequence in a batch.
+      training: bool scalar, whether dataset is for training (True) or
+        evaluation (False).
+    """
     self._batch_size = batch_size
     self._seq_len = seq_len
     self._training = training
 
   def build_dataset(self, filenames):
+    """Builds dataset for fine-tuning XLNet model on question-answering task.
+
+    Args:
+      filenames: a list of strings, names of TFRecord files.
+
+    Returns:
+      dataset: an instance of tf.data.Dataset, each item is a dict with the
+        following entries
+        'token_ids' -> int tensor of shape [batch_size, seq_len], sequences of
+          token IDs.
+        'pad_mask' -> float tensor of shape [batch_size, seq_len], sequences of
+          1's and 0's where 1's indicate padded (masked) tokens.
+        'seg_ids' -> int tensor of shape [batch_size, seq_len], sequences of
+          segment IDs.
+        'label_ids' -> int tensor of shape [batch_size], sequence-level labels.
+    """
     parse_fn = functools.partial(parse_fn_sequence_classification_bert,
-                                 seq_len=self._seq_len) 
+                                 seq_len=self._seq_len)
 
     dataset = create_and_preprocess(filenames,
-        parse_fn=parse_fn,
-        shuffle=self._training,
-        num_parallel_calls=1,
-        filter_fn=None,
-        buffer_size_per_file=None,
-        random_seed=None)
+                                    parse_fn=parse_fn,
+                                    shuffle=self._training,
+                                    num_parallel_calls=1,
+                                    filter_fn=None,
+                                    buffer_size_per_file=None,
+                                    random_seed=None)
+
     dataset = dataset.batch(self._batch_size)
     if self._training:
       dataset = dataset.repeat(-1)
     dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
     return dataset
-

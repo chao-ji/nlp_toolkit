@@ -157,7 +157,7 @@ class RelativeAttention(Attention):
 
     Args:
       content_stream: float tensor of shape [batch_size, q_seq_len, hidden_size]
-        , the query sequences for TransformerXL or the content stream for 
+        , the query sequences for TransformerXL or the content stream for
         pre-training XLNet.
       content_mask: float tensor of shape [batch_size, 1, q_seq_len, c_seq_len],
         token mask for content stream.
@@ -170,12 +170,12 @@ class RelativeAttention(Attention):
       position_bias: float tensor of shape [num_heads, size_per_head], position
         bias.
       query_stream: (Optional) float tensor of shape [batch_size,
-        num_predictions, hidden_size], the query stream for pre-training XLNet. 
+        num_predictions, hidden_size], the query stream for pre-training XLNet.
       query_mask: (Optional) float tensor of shape [batch_size, 1, q_seq_len,
         c_seq_len], token mask for query stream.
       target_mapping: (Optional) float tensor of shape [batch_size,
         num_predictions, q_seq_len], one-hot encodings of the indices of
-        prediction targets. 
+        prediction targets.
       segment_encoding: (Optional) float tensor of shape [2, num_heads,
         size_per_head], embedding vectors of the binary information that
         whether two positions are from the same segment or not.
@@ -242,7 +242,7 @@ class RelativeAttention(Attention):
                          segment_matrix=None,
                          segment_bias=None,
                          training=False):
-    """Compute weighted average of multi-headed values. 
+    """Compute weighted average of multi-headed values.
 
     Args:
       q: float tensor of shape [batch_size, q_seq_len, num_heads, size_per_head]
@@ -314,7 +314,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     Input: [batch_size(N), seq_len(T)]
     Weight: [vocab_size(V), hidden_size(D)]
     Output: [batch_size(N), seq_len(T), hidden_size(D)]
-  
+
   - Logits mode converts embedding vectors to logits.
     Input: [batch_size(N), seq_len(T), hidden_size(D)]
     Weight: [vocab_size(V), hidden_size(D)]
@@ -357,7 +357,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     Args:
       inputs: int tensor of shape [batch_size, seq_len] in "embedding" mode, the
         sequences token ids; or float tensor of shape [batch_size, seq_len,
-        hidden_size] in "logits" mode, the sequences in continuous 
+        hidden_size] in "logits" mode, the sequences in continuous
         representation.
       mode: string scalar, "embedding" or "logits".
 
@@ -376,7 +376,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     return outputs
 
   def _get_vocab_embeddings(self):
-    """Returns the embedding matrix (of shape [vocab_size, hidden_size]). Note 
+    """Returns the embedding matrix (of shape [vocab_size, hidden_size]). Note
     that SOS token (index 0) has a fixed (not trainable) zero embedding vector.
     """
     return tf.pad(self.trainable_variables[0][1:], [[1, 0], [0, 0]])
@@ -385,7 +385,7 @@ class EmbeddingLayer(tf.keras.layers.Layer):
     """The dense layer that converts token IDs to embedding vectors.
 
     Args:
-      inputs: int tensor of shape [batch_size, seq_len], the sequences token 
+      inputs: int tensor of shape [batch_size, seq_len], the sequences token
         ids.
 
     Returns:
@@ -443,17 +443,17 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     - `embedding` mode: converts token ids to embedding vectors.
       Input: [batch_size(N), seq_len(T)]
       Output: [batch_size(N), seq_len(T), hidden_size(D)]
-  
-    - `softmax` mode: converts embedding vectors to probability distributions 
+
+    - `softmax` mode: converts embedding vectors to probability distributions
         over tokens in the vocabulary.
       Input: [batch_size(N), seq_len(T), hidden_size(D)]
       Output: [batch_size(N), seq_len(T), vocab_size(V)]
 
-    - `loss` mode: computes per-token "head loss" and "tail loss" given 
+    - `loss` mode: computes per-token "head loss" and "tail loss" given
       embedding vectors and groundtruth next-token ids.
-      Input: [batch_size(N), seq_len(T), hidden_size(D)], [batch_size(N), 
+      Input: [batch_size(N), seq_len(T), hidden_size(D)], [batch_size(N),
         seq_len(T)]
-      Output: [batch_size(N) * seq_len(T) + num_valid_tail1 + num_valid_tail2 + 
+      Output: [batch_size(N) * seq_len(T) + num_valid_tail1 + num_valid_tail2 +
         ...]
   """
   def __init__(self,
@@ -466,19 +466,19 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
 
     Args:
       hidden_size: int scalar, the hidden size of continuous representation.
-      cutoffs: list of ints, the boundaries of token indices (tokens are sorted 
-        in descending order of frequencies in the vocabulary) with which to 
-        split the set of tokens into a head partition and potentially multiple 
-        tail partitions. For example, for `cutoff` = [b0, b1, ..., V], where `V` 
-        is the vocabulary size, the head contains tokens with indices in 
-        `[0, b0)`, and first tail contains tokens with indices in `[b0, b1)`, 
+      cutoffs: list of ints, the boundaries of token indices (tokens are sorted
+        in descending order of frequencies in the vocabulary) with which to
+        split the set of tokens into a head partition and potentially multiple
+        tail partitions. For example, for `cutoff` = [b0, b1, ..., V], where `V`
+        is the vocabulary size, the head contains tokens with indices in
+        `[0, b0)`, and first tail contains tokens with indices in `[b0, b1)`,
         and so on.
-      project_factor: int scalar, the factor by which to decrease the hidden 
+      project_factor: int scalar, the factor by which to decrease the hidden
         size of token embeddings for different tails. For example, tokens in the
         head has hidden size `hidden_size`, while tokens in the first tail has
         reduced hidden size `hidden_size // project_factor`, and so on.
       kernel_initializer: string scalar, the weight initializer.
-      scale_embeddings: bool scalar, whether to scale the embeddings by square 
+      scale_embeddings: bool scalar, whether to scale the embeddings by square
         root of hidden size. Defaults to True.
     """
     super(AdaptiveInputSoftmax, self).__init__()
@@ -540,24 +540,24 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     super(AdaptiveInputSoftmax, self).build(inputs_shape)
 
   def call(self, inputs, labels=None, mode='softmax'):
-    """Runs the forward pass with different behavior according to the `mode`. 
+    """Runs the forward pass with different behavior according to the `mode`.
 
     Args:
-      inputs: float tensor of shape [batch_size, seq_len, hidden_size], 
+      inputs: float tensor of shape [batch_size, seq_len, hidden_size],
         embedding representation of tokens, which are outputs from the model (
         e.g. RNN or TransformerXL), for mode 'softmax' and 'loss'; Or int tensor
-        of shape [batch_size, seq_len], the sequences token ids, for mode 
+        of shape [batch_size, seq_len], the sequences token ids, for mode
         'embedding'.
-      labels: (Optional) int tensor of shape [batch_size, seq_len], the 
+      labels: (Optional) int tensor of shape [batch_size, seq_len], the
         groundtruth next-token ids. Must be provided for mode 'loss'.
-      mode: (Optional) string scalar, either 'embedding', 'softmax' or 'loss'. 
+      mode: (Optional) string scalar, either 'embedding', 'softmax' or 'loss'.
 
     Returns:
-      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in 
+      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in
         "embedding" mode, the sequences in continuous representation; or float
-        tensor of shape [batch_size, seq_len, vocab_size], the per-token 
-        probability distribution over tokens in vocabulary; or float tensor of 
-        shape [batch_size(N) * seq_len(T) + num_valid_tail1 + num_valid_tail2 + 
+        tensor of shape [batch_size, seq_len, vocab_size], the per-token
+        probability distribution over tokens in vocabulary; or float tensor of
+        shape [batch_size(N) * seq_len(T) + num_valid_tail1 + num_valid_tail2 +
         ...].
     """
     if mode == 'embedding':
@@ -575,7 +575,7 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     representation.
 
     Args:
-      inputs: int tensor of shape [batch_size, seq_len], the sequences token 
+      inputs: int tensor of shape [batch_size, seq_len], the sequences token
         ids.
 
     Returns:
@@ -651,16 +651,16 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
     """Computes the per-token loss using adaptive softmax.
 
     Args:
-      inputs: float tensor of shape [batch_size, seq_len, hidden_size], the 
-        tensor holding input token embeddings computed from the last layer of 
+      inputs: float tensor of shape [batch_size, seq_len, hidden_size], the
+        tensor holding input token embeddings computed from the last layer of
         the model.
-      labels: int tensor of shape [batch_size, seq_len], the groundtruth 
-        next-token ids. 
+      labels: int tensor of shape [batch_size, seq_len], the groundtruth
+        next-token ids.
 
     Returns:
-      losses: float tensor of shape [batch_size * seq_len + num_valid1 + 
-        num_valid2 + ...], the per-token loss, where `num_valid{i}` is the 
-        num of token ids in `labels` that fall within in the range of token 
+      losses: float tensor of shape [batch_size * seq_len + num_valid1 +
+        num_valid2 + ...], the per-token loss, where `num_valid{i}` is the
+        num of token ids in `labels` that fall within in the range of token
         indices of tail partition `i`.
     """
     head_weight = self.trainable_variables[1]
@@ -676,7 +676,7 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       low, high = self._cutoffs[i - 1], self._cutoffs[i]
       mask = tf.logical_and(labels >= low, labels < high)
 
-      # update the entries in `head_labels` to `cutoffs[0] + i - 1`, i.e. the 
+      # update the entries in `head_labels` to `cutoffs[0] + i - 1`, i.e. the
       #"head class ID" for tail partition `i`
       # [batch_size, seq_len]
       head_labels = tf.where(mask, self._cutoffs[0] + i - 1, head_labels)
@@ -712,15 +712,15 @@ class Projection(tf.keras.layers.Layer):
 
   This projection layer operates in either Split mode or Merge mode:
 
-    - Split mode converts the input sequences in the original representation 
-      into the multi-headed "query", "key" or "value" for the attention 
-      computation. 
+    - Split mode converts the input sequences in the original representation
+      into the multi-headed "query", "key" or "value" for the attention
+      computation.
 
-      Input: [batch_size(N), seq_len(T), hidden_size(D)] 
+      Input: [batch_size(N), seq_len(T), hidden_size(D)]
       Weight: [hidden_size(D), num_heads(H), size_per_head(S)]
       Output: dot([N*T, D], [D, H*S]) reshape ==> [N, T, H, S]
 
-    - Merge mode performs the opposite action of Split, converting the 
+    - Merge mode performs the opposite action of Split, converting the
       multi-headed "value" back to the original representation.
 
       Input: [batch_size(N), seq_len(T), num_heads(H), size_per_head(S)]
@@ -738,7 +738,7 @@ class Projection(tf.keras.layers.Layer):
       num_heads: int scalar, num of attention heads.
       size_per_head: int scalar, the hidden size of each attention head.
       kernel_initializer: string scalar, the weight initializer.
-      mode: string scalar, mode of projection ("split" or "merge") . 
+      mode: string scalar, mode of projection ("split" or "merge").
     """
     super(Projection, self).__init__()
     if mode not in ('split', 'merge'):
@@ -753,7 +753,7 @@ class Projection(tf.keras.layers.Layer):
     """Creates weights of this layer.
 
     Args:
-      inputs_shape: tuple of ints or 1-D int tensor, the last element 
+      inputs_shape: tuple of ints or 1-D int tensor, the last element
         corresponds to the depth.
     """
     depth = inputs_shape[-1]
@@ -776,13 +776,13 @@ class Projection(tf.keras.layers.Layer):
     """Performs the projection.
 
     Args:
-      inputs: float tensor of shape [batch_size, seq_len, num_heads, 
-        size_per_head] in Merge mode, or float tensor of shape [batch_size, 
+      inputs: float tensor of shape [batch_size, seq_len, num_heads,
+        size_per_head] in Merge mode, or float tensor of shape [batch_size,
         seq_len, hidden_size] in Split mode.
 
     Returns:
-      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in 
-        Merge mode, or float tensor of shape [batch_size, seq_len, num_heads, 
+      outputs: float tensor of shape [batch_size, seq_len, hidden_size] in
+        Merge mode, or float tensor of shape [batch_size, seq_len, num_heads,
         size_per_head] int Split mode.
     """
     kernel = self.trainable_variables[0]
@@ -805,12 +805,12 @@ class FeedForwardNetwork(tf.keras.layers.Layer):
     """Constructor.
 
     Args:
-      hidden_size: int scalar, the hidden size of continuous representation, 
+      hidden_size: int scalar, the hidden size of continuous representation,
         which is also the depth of the output dense layer.
-      filter_size: int scalar, the depth of the intermediate dense layer. 
+      filter_size: int scalar, the depth of the intermediate dense layer.
       dropout_rate: float scalar, dropout rate for the Dropout layers.
       filter_activation: callable or string, activation function of the filter
-        dense layer. Defaults to ReLU. 
+        dense layer. Defaults to ReLU.
     """
     super(FeedForwardNetwork, self).__init__()
     self._hidden_size = hidden_size
@@ -827,12 +827,12 @@ class FeedForwardNetwork(tf.keras.layers.Layer):
     """Performs projection through two dense layers.
 
     Args:
-      inputs: float tensor of shape [batch_size, seq_len, hidden_size], the 
+      inputs: float tensor of shape [batch_size, seq_len, hidden_size], the
         input sequences.
       training: bool scalar, True if in training mode.
 
     Return:
-      outputs: float tensor of shape [batch_size, seq_len, hidden_size], the 
+      outputs: float tensor of shape [batch_size, seq_len, hidden_size], the
         output sequences.
     """
     outputs = self._dense_layer_filter(inputs)

@@ -15,10 +15,10 @@ class CosineDecayLearningRateSchedule(
     Args:
       learning_rate: float scalar, the base learning rate.
       decay_steps: int scalar, num of steps to decay over.
-      alpha: float scalar, minimum learning rate value as a fraction of 
+      alpha: float scalar, minimum learning rate value as a fraction of
         learning rate.
       warmup_steps: int scalar, the num of warm-up steps.
-      warmup_lr: float scalar, learning rate for warm-up steps. 
+      warmup_lr: float scalar, learning rate for warm-up steps.
     """
     super(CosineDecayLearningRateSchedule, self).__init__()
     self._learning_rate = learning_rate
@@ -28,7 +28,7 @@ class CosineDecayLearningRateSchedule(
     self._warmup_lr = warmup_lr
 
   def __call__(self, global_step):
-    """Computes learning rate. 
+    """Computes learning rate.
 
     Args:
       global_step: int scalar tensor, the current global step.
@@ -70,11 +70,11 @@ class LearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     """Computes learning rate with linear warmup and rsqrt decay.
 
     Args:
-      global_step: int scalar tensor, the current global step. 
+      global_step: int scalar tensor, the current global step.
 
     Returns:
       learning_rate: float scalar tensor, the learning rate as a function of
-        the input `global_step`. 
+        the input `global_step`.
     """
     global_step = tf.cast(global_step, 'float32')
     learning_rate = self._learning_rate
@@ -91,7 +91,7 @@ def save_attention_weights(filename, data):
 
   Args:
     filename: string scalar, filename.
-    data: a list or tuple or dict of numpy arrays, the attention weights and 
+    data: a list or tuple or dict of numpy arrays, the attention weights and
       token ids of input and translated sequence.
   """
   np.save(filename, data)
@@ -113,15 +113,15 @@ def dict_to_example(dictionary):
 
 
 def nucleus_sampling(scores, threshold=0.95):
-  """Sample from the head of the probability distribution that contains the 
-  vast majority of probability mass. See https://arxiv.org/abs/1904.09751 
+  """Sample from the head of the probability distribution that contains the
+  vast majority of probability mass. See https://arxiv.org/abs/1904.09751
   for details. The distribution is truncated to the  and re-normalized.
 
   Args:
     scores: numpy array of shape [vocab_size], the probability distribution (
       sum to one) of all possible next-tokens over the vocabulary.
     threshold: float scalar, the minimum value of the sum of probability mass
-      that the head of the distribution must exceed. 
+      that the head of the distribution must exceed.
 
   Returns:
     next_token_id: int scalar, the sampled id of the next token.
@@ -137,7 +137,7 @@ def nucleus_sampling(scores, threshold=0.95):
     sum2 = cumsum[mid + 1]
     if sum1 < threshold and sum2 >= threshold:
       break
-    elif sum2 < threshold: # exclude indices <= mid 
+    elif sum2 < threshold: # exclude indices <= mid
       low = mid + 1
     elif sum1 >= threshold: # exclude indices >= mid
       high = mid - 1
@@ -156,7 +156,7 @@ def topk_sampling(scores, k=40):
   Args:
     scores: numpy array of shape [vocab_size], the probability distribution (
       sum to one) of all possible next-tokens over the vocabulary.
-    k: int scalar, the num of next-tokens with largest probability to sample 
+    k: int scalar, the num of next-tokens with largest probability to sample
       from.
 
   Returns:
@@ -177,15 +177,15 @@ def topk_sampling(scores, k=40):
 
 
 def rel_shift(inputs):
-  """Shift the matrix in the input tensor, so that the query position matches 
+  """Shift the matrix in the input tensor, so that the query position matches
   correctly with the key position for computing attention scores.
 
   Given input tensor `x` of shape [batch_size, num_heads, q_seq_len, r_seq_len],
-  each slice `x[i, j]` is a matrix of shape [q_seq_len, r_seq_len] (Note that 
+  each slice `x[i, j]` is a matrix of shape [q_seq_len, r_seq_len] (Note that
   generally `r_seq_len` >= `q_seq_len`
 
   the matrix `x[i, j]` in the output will be a left-shifted version of the input
-  , where the 0th, 1st, ..., and `q_seq_len - 1`-th row will be left-shifted by 
+  , where the 0th, 1st, ..., and `q_seq_len - 1`-th row will be left-shifted by
   `q_seq_len - 1`, `q_seq_len - 2`, ..., and 0 positions.
 
 
