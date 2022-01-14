@@ -198,11 +198,11 @@ class DynamicBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
       """Maps key to window size."""
       return bucket_batch_sizes[bucket_id]
 
-    return dataset.apply(tf.data.experimental.group_by_window(
+    return dataset.group_by_window(
         key_func=example_to_bucket_id,
         reduce_func=batching_fn,
         window_size=None,
-        window_size_func=window_size_fn))
+        window_size_func=window_size_fn)
 
   def _create_bucket_bounds(
       self, min_boundary=_MIN_BOUNDARY, boundary_scale=_BOUNDARY_SCALE):
@@ -305,10 +305,10 @@ class StaticBatchDatasetBuilder(BaseSequenceTransductionDatasetBuilder):
       return grouped_dataset.padded_batch(
           self._batch_size, ([None], [None]), drop_remainder=True)
 
-    return dataset.apply(tf.data.experimental.group_by_window(
+    return dataset.group_by_window(
         key_func=example_to_bucket_id,
         reduce_func=batching_fn,
-        window_size=self._batch_size))
+        window_size=self._batch_size)
 
 
 class SequenceClassifierDatasetBuilder(object):
@@ -376,10 +376,10 @@ class SequenceClassifierDatasetBuilder(object):
       return grouped_dataset.padded_batch(
           self._batch_size, (None,), drop_remainder=True)
 
-    dataset = dataset.apply(tf.data.experimental.group_by_window(
+    dataset = dataset.group_by_window(
         key_func=example_to_bucket_id,
         reduce_func=batching_fn,
-        window_size=self._batch_size))
+        window_size=self._batch_size)
     dataset = dataset.repeat(-1)
     dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
@@ -415,10 +415,10 @@ class SequenceClassifierDatasetBuilder(object):
       return grouped_dataset.padded_batch(
           self._batch_size, ([None], [1]), drop_remainder=True)
 
-    dataset = dataset.apply(tf.data.experimental.group_by_window(
+    dataset = dataset.group_by_window(
         key_func=example_to_bucket_id,
         reduce_func=batching_fn,
-        window_size=self._batch_size))
+        window_size=self._batch_size)
     dataset = dataset.repeat(-1)
     dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 

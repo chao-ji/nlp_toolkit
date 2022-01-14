@@ -60,7 +60,7 @@ class BeamSearch(object):
           cache: nested dictionary of tensors [batch_size*beam_width, ...].
           kwargs: (Optional) dict, additional optional arguments.
         The function returns a tuple of logits and the updated cache:
-          logits: a tensor of shape [batch*beam_width, vocab_size].
+          logits: a tensor of shape [batch_size*beam_width, vocab_size].
           updated_cache: nested dictionary with the same structure as the
             input cache.
       vocab_size: int scalar, the size of the vocabulary, used for topk
