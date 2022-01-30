@@ -626,10 +626,11 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
       softmax: float tensor of shape [batch_size, seq_len, vocab_size], the
         per-token probability distribution over tokens in vocabulary.
     """
+    head_weight_proj = self.trainable_variables[0]
     head_weight = self.trainable_variables[1]
 
     # [batch_size, seq_len, cutoffs[0] + num_tails]
-    head_logits = tf.matmul(inputs, head_weight)
+    head_logits = tf.matmul(tf.matmul(inputs, head_weight_proj), head_weight)
     head_softmax = tf.nn.softmax(head_logits)
 
     # [batch_size, seq_len, cutoffs[0]]
@@ -663,6 +664,7 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
         num of token ids in `labels` that fall within in the range of token
         indices of tail partition `i`.
     """
+    head_weight_proj = self.trainable_variables[0]
     head_weight = self.trainable_variables[1]
 
     training_losses = []
@@ -696,7 +698,7 @@ class AdaptiveInputSoftmax(tf.keras.layers.Layer):
           labels=tail_labels, logits=tail_logits)
       training_losses.append(tail_loss)
 
-    head_logits = tf.matmul(inputs, head_weight)
+    head_logits = tf.matmul(tf.matmul(inputs, head_weight_proj), head_weight)
 
     head_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=head_labels, logits=head_logits)
