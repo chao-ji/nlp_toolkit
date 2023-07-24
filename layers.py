@@ -163,7 +163,7 @@ class RelativeAttention(Attention):
         token mask for content stream.
       context: float tensor of shape [batch_size, c_seq_len, hidden_size], the
         context sequences that the query sequences attend to.
-      position_encoding: float tensor of shape [batch_size, r_seq_len,
+      position_encoding: float tensor of shape [batch_size, c_seq_len,
         hidden_size], the position encoding for the context sequences.
       content_bias: float tensor of shape [num_heads, size_per_head], content
         bias.
@@ -198,7 +198,7 @@ class RelativeAttention(Attention):
     k_content = self._dense_layer_key(context)
     v = self._dense_layer_value(context)
 
-    # [batch_size, r_seq_len, num_heads, size_per_head]
+    # [batch_size, c_seq_len, num_heads, size_per_head]
     k_position = self._dense_layer_key_position(position_encoding)
 
     kwargs = {'k_content': k_content,
@@ -254,7 +254,7 @@ class RelativeAttention(Attention):
         size_per_head], multi-headed projected content-based key.
       v: float tensor of shape [batch_size, c_seq_len, num_heads, size_per_head]
         , multi-headed projected value.
-      k_position: float tensor of shape [batch_size, r_seq_len, num_heads,
+      k_position: float tensor of shape [batch_size, c_seq_len, num_heads,
         size_per_head], multi-headed projected position-based key.
       content_bias: float tensor of shape [num_heads, size_per_head], content
         bias.
@@ -277,7 +277,7 @@ class RelativeAttention(Attention):
     content_attention = tf.einsum(
         'NQHS,NCHS->NHQC', q + content_bias, k_content)
     position_attention = tf.einsum(
-        'NQHS,NRHS->NHQR', q + position_bias, k_position)
+        'NQHS,NCHS->NHQC', q + position_bias, k_position)
     position_attention = rel_shift(position_attention)
     attention_shape = tf.shape(content_attention)
     if self._for_xlnet:
